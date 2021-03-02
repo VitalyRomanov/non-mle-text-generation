@@ -36,7 +36,7 @@ class LSTMModel(nn.Module):
         # encoder_output: (seq_len, batch, hidden_size * num_directions)
         # _encoder_hidden: (num_layers * num_directions, batch, hidden_size)
         # _encoder_cell: (num_layers * num_directions, batch, hidden_size)
-        encoder_out = self.encoder(sample['net_input']['src_tokens'], sample['net_input']['src_lengths'])
+        encoder_out = self.encoder(sample['net_input']['src_tokens'], sample['net_input']['src_lengths'])  # TODO what is net input
         
         # # The encoder hidden is  (layers*directions) x batch x dim.   
         # # If it's bidirectional, We need to convert it to layers x batch x (directions*dim).
@@ -164,7 +164,7 @@ class LSTMDecoder(nn.Module):
 
 
     def forward(self, prev_output_tokens, encoder_out, incremental_state=None):
-        if incremental_state is not None:
+        if incremental_state is not None:  # TODO what is this?
             prev_output_tokens = prev_output_tokens[:, -1:]
         bsz, seqlen = prev_output_tokens.size()
 
@@ -255,7 +255,7 @@ class LSTMDecoder(nn.Module):
         utils.set_incremental_state(self, incremental_state, 'cached_state', new_state)
 
 
-
+# TODO why they use this specific initialization
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
     m.weight.data.uniform_(-0.1, 0.1)
