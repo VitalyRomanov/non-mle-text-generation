@@ -17,8 +17,8 @@ import utils
 from meters import AverageMeter
 from discriminator import Discriminator
 from generator import LSTMModel
-from train_generator import train_g
-from train_discriminator import train_d
+# from train_generator import train_g
+# from train_discriminator import train_d
 from PGLoss import PGLoss
 
 
@@ -40,6 +40,7 @@ options.add_discriminator_model_args(parser)
 options.add_generation_args(parser)
 
 def main(args):
+    args.gpuid = ""  # TODO disable cuda
     use_cuda = (len(args.gpuid) >= 1)
     print("{0} GPU(s) are available".format(cuda.device_count()))
 
@@ -177,10 +178,10 @@ def main(args):
             ## part I: use gradient policy method to train the generator
 
             # use policy gradient training when random.random() > 50%
-            if random.random()  >= 0.5:
+            if random.random()  >= 0.5:  # TODO why use both?
 
                 print("Policy Gradient Training")
-                
+                # TODO why prev_output_tokens non zero?
                 sys_out_batch = generator(sample) # 64 X 50 X 6632
 
                 out_batch = sys_out_batch.contiguous().view(-1, sys_out_batch.size(-1)) # (64 * 50) X 6632   
@@ -260,8 +261,8 @@ def main(args):
                 fake_labels = fake_labels.cuda()
             
             disc_out = discriminator(src_sentence, fake_sentence) # 64 X 1
-            
-            d_loss = d_criterion(disc_out.squeeze(1), fake_labels)
+
+            d_loss = d_criterion(disc_out.squeeze(1), fake_labels)  # TODO true labels are not used
 
             acc = torch.sum(torch.round(disc_out).squeeze(1) == fake_labels).float() / len(fake_labels)
 
