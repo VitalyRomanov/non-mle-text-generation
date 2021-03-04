@@ -35,13 +35,18 @@ def main(args):
         Model = LSTMModel
     elif model_name == "vae":
         Model = VarLSTMModel
+    elif model_name == "mle":
+        Model = LSTMModel
+    else:
+        raise Exception("Model name should be: gan|vae|mle")
 
     use_cuda = (len(args.gpuid) >= 1)
     if args.gpuid:
         cuda.set_device(args.gpuid[0])
 
         # Load dataset
-        if args.replace_unk is None:
+        # if args.replace_unk is None:
+        if data.has_binary_files(args.data, ['test']):
             dataset = data.load_dataset(
                 args.data,
                 ['test'],
