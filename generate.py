@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser(
     description="Driver program for JHU Adversarial-NMT.")
 
 # Load args
+parser.add_argument("--model_name", default=None)
 options.add_general_args(parser)
 options.add_dataset_args(parser)
 options.add_checkpoint_args(parser)
@@ -27,6 +28,13 @@ options.add_generator_model_args(parser)
 
 
 def main(args):
+
+    model_name = options.model_name
+    assert model_name is not None
+    if model_name == "gan":
+        Model = LSTMModel
+    elif model_name == "vae":
+        Model = VarLSTMModel
 
     use_cuda = (len(args.gpuid) >= 1)
     if args.gpuid:
@@ -72,7 +80,7 @@ def main(args):
     # Load model
     g_model_path = 'checkpoint/LSTMTrainer2021-03-04 12:23:31.688195/best_gmodel.pt'
     assert os.path.exists(g_model_path)
-    generator = LSTMModel(args, dataset.src_dict,
+    generator = Model(args, dataset.src_dict,
                           dataset.dst_dict, use_cuda=use_cuda)
     model_dict = generator.state_dict()
     model = torch.load(g_model_path)
