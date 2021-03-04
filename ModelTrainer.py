@@ -300,6 +300,7 @@ class ModelTrainer:
             num_update += 1
 
             # part II: train the discriminator
+            # if i % 10 == 0:
             self.discriminator_step(sample, i, epoch_i, len(trainloader))
 
         return num_update
