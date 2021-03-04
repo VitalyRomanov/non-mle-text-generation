@@ -377,10 +377,7 @@ class SequenceGenerator(object):
     def _decode(self, tokens, encoder_out, incremental_states):
 
         with torch.no_grad():
-            try:
-                decoder_out, attn = self.model.decoder(tokens, encoder_out, incremental_states[self.model])
-            except:
-                decoder_out, attn, _ = self.model.decoder(tokens, encoder_out, incremental_states[self.model])
+            decoder_out, attn = self.model.decoder(tokens, encoder_out, incremental_states[self.model], inference=True)
         probs = F.log_softmax(decoder_out[:, -1, :], dim=1)
 
         if attn is not None:

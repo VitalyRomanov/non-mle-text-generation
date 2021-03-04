@@ -38,7 +38,7 @@ class LSTMModel(nn.Module):
             use_cuda=self.use_cuda
         )
 
-    def forward(self, sample):
+    def forward(self, sample, inference=False):
         # encoder_output: (seq_len, batch, hidden_size * num_directions)
         # _encoder_hidden: (num_layers * num_directions, batch, hidden_size)
         # _encoder_cell: (num_layers * num_directions, batch, hidden_size)
@@ -50,7 +50,7 @@ class LSTMModel(nn.Module):
         #     encoder_hiddens = torch.cat([encoder_hiddens[0:encoder_hiddens.size(0):2], encoder_hiddens[1:encoder_hiddens.size(0):2]], 2)
         #     encoder_cells = torch.cat([encoder_cells[0:encoder_cells.size(0):2], encoder_cells[1:encoder_cells.size(0):2]], 2)
 
-        decoder_out, attn_scores = self.decoder(sample['net_input']['prev_output_tokens'], encoder_out)
+        decoder_out, attn_scores = self.decoder(sample['net_input']['prev_output_tokens'], encoder_out, inference=inference)
         decoder_out = F.log_softmax(decoder_out, dim=2)
         
         # sys_out_batch = decoder_out.contiguous().view(-1, decoder_out.size(-1))
@@ -84,11 +84,11 @@ class VarLSTMModel(LSTMModel):
             use_cuda=self.use_cuda
         )
 
-    def forward(self, sample):
+    def forward(self, sample, inference=False):
         encoder_out = self.encoder(sample['net_input']['src_tokens'],
                                    sample['net_input']['src_lengths'])  # TODO what is net input
 
-        decoder_out, attn_scores, kld = self.decoder(sample['net_input']['prev_output_tokens'], encoder_out)
+        decoder_out, attn_scores, kld = self.decoder(sample['net_input']['prev_output_tokens'], encoder_out, inference=inference)
         decoder_out = F.log_softmax(decoder_out, dim=2)
 
         return decoder_out, kld
@@ -199,7 +199,7 @@ class LSTMDecoder(nn.Module):
             for layer in range(num_layers)
         ])
 
-    def forward(self, prev_output_tokens, encoder_out, incremental_state=None):
+    def forward(self, prev_output_tokens, encoder_out, incremental_state=None, inference=False):
         if incremental_state is not None:  # TODO what is this?
             prev_output_tokens = prev_output_tokens[:, -1:]
         bsz, seqlen = prev_output_tokens.size()
@@ -332,7 +332,7 @@ class VarLSTMDecoder(LSTMDecoder):
         kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
         return kld
 
-    def forward(self, prev_output_tokens, encoder_out, incremental_state=None):
+    def forward(self, prev_output_tokens, encoder_out, incremental_state=None, inference=False):
         if incremental_state is not None:  # TODO what is this?
             prev_output_tokens = prev_output_tokens[:, -1:]
         bsz, seqlen = prev_output_tokens.size()
@@ -365,13 +365,17 @@ class VarLSTMDecoder(LSTMDecoder):
         outs = []
 
         kld = 0.
+        z, mu, logvar = self.reparameterize(prev_hiddens[0])
+        kld += self.compute_kld(mu, logvar)
+
         for j in range(seqlen):
             # input feeding: concatenate context vector from previous time step
             input = torch.cat((x[j, :, :], input_feed), dim=1)
 
-            z, mu, logvar = self.reparameterize(prev_hiddens[0])
-            input = torch.cat([input, z], dim=1)
-            kld += self.compute_kld(mu, logvar)
+            if inference is True:
+                input = torch.cat([input, mu], dim=1)
+            else:
+                input = torch.cat([input, z], dim=1)
 
             for i, rnn in enumerate(self.layers):
                 # recurrent cell
@@ -407,7 +411,10 @@ class VarLSTMDecoder(LSTMDecoder):
 
         x = self.fc_out(x)
 
-        return x, attn_scores, kld
+        if inference is True:
+            return x, attn_scores
+        else:
+            return x, attn_scores, kld
 
 
 # TODO why they use this specific initialization
