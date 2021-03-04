@@ -1,6 +1,8 @@
 import argparse
 import logging
+import math
 
+import torch
 from torch import cuda
 
 import options
@@ -8,7 +10,7 @@ import utils
 
 from ModelTrainer import ModelTrainer
 from discriminator import AttDiscriminator
-from generator import VarLSTMModel
+from generator import VarLSTMModel, LSTMModel
 
 logging.basicConfig(
     format='%(asctime)s %(levelname)s: %(message)s',
@@ -29,9 +31,21 @@ options.add_generation_args(parser)
 
 
 class GanLSTMTrainer(ModelTrainer):
+    def __init__(self, args):
+        # Set model parameters
+        args.encoder_embed_dim = 128
+        args.encoder_layers = 2  # 4
+        args.encoder_dropout_out = 0
+        args.decoder_embed_dim = 128
+        args.decoder_layers = 2  # 4
+        args.decoder_out_embed_dim = 128
+        args.decoder_dropout_out = 0
+        args.bidirectional = False
+
+        super(GanLSTMTrainer, self).__init__(args)
+
     def create_generator(self, args):
-        # self.generator = LSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
-        self.generator = VarLSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
+        self.generator = LSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
         print("Generator loaded successfully!")
 
     def create_discriminator(self, args):
@@ -41,7 +55,75 @@ class GanLSTMTrainer(ModelTrainer):
         print("Discriminator loaded successfully!")
 
 
+class LstmMleTrainer(ModelTrainer):
+    def __init__(self, args):
+        # Set model parameters
+        args.encoder_embed_dim = 128
+        args.encoder_layers = 2  # 4
+        args.encoder_dropout_out = 0
+        args.decoder_embed_dim = 128
+        args.decoder_layers = 2  # 4
+        args.decoder_out_embed_dim = 128
+        args.decoder_dropout_out = 0
+        args.bidirectional = False
+
+        super(LstmMleTrainer, self).__init__(args)
+
+    def create_generator(self, args):
+        self.generator = LSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
+        print("Generator loaded successfully!")
+
+    def create_discriminator(self, args):
+        # discriminator = Discriminator(args, dataset.src_dict, dataset.dst_dict, use_cuda=use_cuda)
+        self.discriminator = AttDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+                                              use_cuda=self.use_cuda)
+        print("Discriminator loaded successfully!")
+
+    def train_loop(self, trainloader, epoch_i, num_update):
+        for i, sample in enumerate(trainloader):
+
+            if self.use_cuda:
+                # wrap input tensors in cuda tensors
+                sample = utils.make_variable(sample, cuda=cuda)
+
+            self.mle_step(sample, i, epoch_i, len(trainloader))
+            num_update += 1
+
+        return num_update
+
+    def eval_loop(self, valloader, epoch_i):
+        for i, sample in enumerate(valloader):
+
+            with torch.no_grad():
+                if self.use_cuda:
+                    # wrap input tensors in cuda tensors
+                    sample = utils.make_variable(sample, cuda=cuda)
+
+                # generator validation
+                loss = self.mle_generator_loss(sample)
+                sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
+                loss = loss.data / sample_size / math.log(2)
+
+                self.g_logging_meters['valid_loss'].update(loss, sample_size)
+                logging.debug(f"G dev loss at batch {i}: {self.g_logging_meters['valid_loss'].avg:.3f}")
+                self.write_summary({"mle_valid_loss": loss},
+                                   i + (epoch_i - 1) * len(valloader))
+
+
 class VarLSTMTrainer(ModelTrainer):
+    def __init__(self, args):
+        # Set model parameters
+        args.encoder_embed_dim = 128
+        args.encoder_layers = 2  # 4
+        args.encoder_dropout_out = 0
+        args.decoder_embed_dim = 128
+        args.decoder_layers = 2  # 4
+        args.decoder_out_embed_dim = 128
+        args.decoder_dropout_out = 0
+        args.bidirectional = False
+
+        super(VarLSTMTrainer, self).__init__(args)
+
     def create_generator(self, args):
         self.generator = VarLSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
         self.kld_weight = 1.
@@ -72,6 +154,24 @@ class VarLSTMTrainer(ModelTrainer):
             num_update += 1
 
         return num_update
+
+    def eval_loop(self, valloader, epoch_i):
+        for i, sample in enumerate(valloader):
+
+            with torch.no_grad():
+                if self.use_cuda:
+                    # wrap input tensors in cuda tensors
+                    sample = utils.make_variable(sample, cuda=cuda)
+
+                # generator validation
+                loss = self.mle_generator_loss(sample)
+                sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
+                loss = loss.data / sample_size / math.log(2)
+
+                self.g_logging_meters['valid_loss'].update(loss, sample_size)
+                logging.debug(f"G dev loss at batch {i}: {self.g_logging_meters['valid_loss'].avg:.3f}")
+                self.write_summary({"mle_valid_loss": loss},
+                                   i + (epoch_i - 1) * len(valloader))
 
 
 
