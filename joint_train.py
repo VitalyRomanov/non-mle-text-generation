@@ -74,10 +74,7 @@ class LstmMleTrainer(ModelTrainer):
         print("Generator loaded successfully!")
 
     def create_discriminator(self, args):
-        # discriminator = Discriminator(args, dataset.src_dict, dataset.dst_dict, use_cuda=use_cuda)
-        self.discriminator = AttDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
-                                              use_cuda=self.use_cuda)
-        print("Discriminator loaded successfully!")
+        pass
 
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
@@ -110,7 +107,7 @@ class LstmMleTrainer(ModelTrainer):
                                    i + (epoch_i - 1) * len(valloader))
 
 
-class VarLSTMTrainer(ModelTrainer):
+class VarLSTMTrainer(LstmMleTrainer):
     def __init__(self, args):
         # Set model parameters
         args.encoder_embed_dim = 128
@@ -129,12 +126,6 @@ class VarLSTMTrainer(ModelTrainer):
         self.kld_weight = 1.
         print("Generator loaded successfully!")
 
-    def create_discriminator(self, args):
-        # discriminator = Discriminator(args, dataset.src_dict, dataset.dst_dict, use_cuda=use_cuda)
-        self.discriminator = AttDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
-                                              use_cuda=self.use_cuda)
-        print("Discriminator loaded successfully!")
-
     def mle_generator_loss(self, sample):
         sys_out_batch, kld = self.generator(sample)
         out_batch = sys_out_batch.contiguous().view(-1, sys_out_batch.size(-1))  # (64 X 50) X 6632
@@ -142,37 +133,6 @@ class VarLSTMTrainer(ModelTrainer):
 
         loss = self.g_criterion(out_batch, trg_batch) + self.kld_weight * kld
         return loss
-
-    def train_loop(self, trainloader, epoch_i, num_update):
-        for i, sample in enumerate(trainloader):
-
-            if self.use_cuda:
-                # wrap input tensors in cuda tensors
-                sample = utils.make_variable(sample, cuda=cuda)
-
-            self.mle_step(sample, i, epoch_i, len(trainloader))
-            num_update += 1
-
-        return num_update
-
-    def eval_loop(self, valloader, epoch_i):
-        for i, sample in enumerate(valloader):
-
-            with torch.no_grad():
-                if self.use_cuda:
-                    # wrap input tensors in cuda tensors
-                    sample = utils.make_variable(sample, cuda=cuda)
-
-                # generator validation
-                loss = self.mle_generator_loss(sample)
-                sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-                loss = loss.data / sample_size / math.log(2)
-
-                self.g_logging_meters['valid_loss'].update(loss, sample_size)
-                logging.debug(f"G dev loss at batch {i}: {self.g_logging_meters['valid_loss'].avg:.3f}")
-                self.write_summary({"mle_valid_loss": loss},
-                                   i + (epoch_i - 1) * len(valloader))
-
 
 
 if __name__ == "__main__":
@@ -186,6 +146,5 @@ if __name__ == "__main__":
     elif model_name == "var":
         trainer = VarLSTMTrainer(options)
     elif model_name == "mle":
-        pass
-        # trainer =
+        trainer = LstmMleTrainer(options)
     trainer.train()
