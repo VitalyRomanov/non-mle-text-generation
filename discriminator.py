@@ -17,7 +17,7 @@ class AttDiscriminator(nn.Module):
 
         assert args.encoder_embed_dim == args.decoder_embed_dim
 
-        emb_dim = args.encoder_embed_dim
+        emb_dim = args.decoder_out_embed_dim
 
         # TODO share this across encoder and decoder
         self.embed_src_tokens = Embedding(len(src_dict), emb_dim, src_dict.pad())

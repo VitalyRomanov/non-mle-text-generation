@@ -27,15 +27,15 @@ from PGLoss import PGLoss
 
 class ModelTrainer:
     def __init__(self, args):
-        # Set model parameters
-        args.encoder_embed_dim = 128
-        args.encoder_layers = 2  # 4
-        args.encoder_dropout_out = 0
-        args.decoder_embed_dim = 128
-        args.decoder_layers = 2  # 4
-        args.decoder_out_embed_dim = 128
-        args.decoder_dropout_out = 0
-        args.bidirectional = False
+        # # Set model parameters
+        # args.encoder_embed_dim = 128
+        # args.encoder_layers = 2  # 4
+        # args.encoder_dropout_out = 0
+        # args.decoder_embed_dim = 128
+        # args.decoder_layers = 2  # 4
+        # args.decoder_out_embed_dim = 128
+        # args.decoder_dropout_out = 0
+        # args.bidirectional = False
 
         self.args = args
 
@@ -119,19 +119,19 @@ class ModelTrainer:
         self.create_discriminator(args)
 
         if self.use_cuda:
-            if torch.cuda.device_count() > 1:
-                self.discriminator = torch.nn.DataParallel(self.discriminator).cuda()
-                self.generator = torch.nn.DataParallel(self.generator).cuda()
-            else:
-                self.generator.cuda()
-                self.discriminator.cuda()
+            # if torch.cuda.device_count() > 1:
+            #     self.discriminator = torch.nn.DataParallel(self.discriminator).cuda()
+            #     self.generator = torch.nn.DataParallel(self.generator).cuda()
+            # else:
+            self.generator.cuda()
+            self.discriminator.cuda()
         else:
             self.discriminator.cpu()
             self.generator.cpu()
 
     def create_output_path(self, args):
         # adversarial training checkpoints saving path
-        path = os.path.join(args.model_file, str(datetime.now()))
+        path = os.path.join(args.model_file, self.__class__.__name__ + str(datetime.now()))
         if not os.path.exists(path):
             os.makedirs(path)
         self.checkpoints_path = path
@@ -300,6 +300,32 @@ class ModelTrainer:
 
         return num_update
 
+    def eval_loop(self, valloader, epoch_i):
+        for i, sample in enumerate(valloader):
+
+            with torch.no_grad():
+                if self.use_cuda:
+                    # wrap input tensors in cuda tensors
+                    sample = utils.make_variable(sample, cuda=cuda)
+
+                # generator validation
+                loss = self.mle_generator_loss(sample)
+                sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
+                loss = loss.data / sample_size / math.log(2)
+
+                self.g_logging_meters['valid_loss'].update(loss, sample_size)
+                logging.debug(f"G dev loss at batch {i}: {self.g_logging_meters['valid_loss'].avg:.3f}")
+                self.write_summary({"mle_valid_loss": loss},
+                                   i + (epoch_i - 1) * len(valloader))
+
+                # discriminator validation
+                d_loss, acc = self.discrimnator_loss_acc(sample)
+                self.d_logging_meters['valid_acc'].update(acc)
+                self.d_logging_meters['valid_loss'].update(d_loss)
+                logging.debug(f"D dev loss {self.d_logging_meters['valid_loss'].avg:.3f}, acc {self.d_logging_meters['valid_acc'].avg:.3f} at batch {i}")
+                self.write_summary({"desc_val_loss": d_loss, "desc_val_acc": acc},
+                                   i + (epoch_i - 1) * len(valloader))
+
     def train(self):
         args = self.args
 
@@ -369,30 +395,7 @@ class ModelTrainer:
                 if val is not None:
                     val.reset()
 
-            for i, sample in enumerate(valloader):
-
-                with torch.no_grad():
-                    if self.use_cuda:
-                        # wrap input tensors in cuda tensors
-                        sample = utils.make_variable(sample, cuda=cuda)
-
-                    # generator validation
-                    loss = self.mle_generator_loss(sample)
-                    sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-                    loss = loss.data / sample_size / math.log(2)
-
-                    self.g_logging_meters['valid_loss'].update(loss, sample_size)
-                    logging.debug(f"G dev loss at batch {i}: {self.g_logging_meters['valid_loss'].avg:.3f}")
-                    self.write_summary({"mle_valid_loss": loss},
-                                       i + (epoch_i - 1) * len(valloader))
-
-                    # discriminator validation
-                    d_loss, acc = self.discrimnator_loss_acc(sample)
-                    self.d_logging_meters['valid_acc'].update(acc)
-                    self.d_logging_meters['valid_loss'].update(d_loss)
-                    logging.debug(f"D dev loss {self.d_logging_meters['valid_loss'].avg:.3f}, acc {self.d_logging_meters['valid_acc'].avg:.3f} at batch {i}")
-                    self.write_summary({"desc_val_loss": d_loss, "desc_val_acc": acc},
-                                       i + (epoch_i - 1) * len(valloader))
+            self.eval_loop(valloader, epoch_i)
 
             self.save_models(epoch_i)
 
