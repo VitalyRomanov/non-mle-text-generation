@@ -125,14 +125,16 @@ class ModelTrainer:
             #     self.generator = torch.nn.DataParallel(self.generator).cuda()
             # else:
             self.generator.cuda()
-            self.discriminator.cuda()
+            if hasattr(self, "discriminator"):
+                self.discriminator.cuda()
         else:
-            self.discriminator.cpu()
+            if hasattr(self, "discriminator"):
+                self.discriminator.cpu()
             self.generator.cpu()
 
     def create_output_path(self, args):
         # adversarial training checkpoints saving path
-        path = os.path.join(args.model_file, self.__class__.__name__ + str(datetime.now()))
+        path = os.path.join(args.model_file, self.__class__.__name__ + " " + str(datetime.now()))
         if not os.path.exists(path):
             os.makedirs(path)
         self.checkpoints_path = path
@@ -145,10 +147,11 @@ class ModelTrainer:
 
     def handicap_discriminator(self):
         # fix discriminator word embedding (as Wu et al. do)
-        for p in self.discriminator.embed_src_tokens.parameters():
-            p.requires_grad = False
-        for p in self.discriminator.embed_trg_tokens.parameters():
-            p.requires_grad = False
+        if hasattr(self, "discriminator"):
+            for p in self.discriminator.embed_src_tokens.parameters():
+                p.requires_grad = False
+            for p in self.discriminator.embed_trg_tokens.parameters():
+                p.requires_grad = False
 
     def create_optimizers(self, args):
         # define optimizer
@@ -156,11 +159,12 @@ class ModelTrainer:
                                                                      self.generator.parameters()),
                                                               args.g_learning_rate)
 
-        self.d_optimizer = eval("torch.optim." + args.d_optimizer)(filter(lambda x: x.requires_grad,
-                                                                     self.discriminator.parameters()),
-                                                              args.d_learning_rate,
-                                                              momentum=args.momentum,
-                                                              nesterov=True)
+        if hasattr(self, "discriminator"):
+            self.d_optimizer = eval("torch.optim." + args.d_optimizer)(filter(lambda x: x.requires_grad,
+                                                                         self.discriminator.parameters()),
+                                                                  args.d_learning_rate,
+                                                                  momentum=args.momentum,
+                                                                  nesterov=True)
 
     def write_summary(self, scores, batch_step):
         # main_name = os.path.basename(self.model_base_path)
@@ -366,7 +370,8 @@ class ModelTrainer:
 
             # set training mode
             self.generator.train()
-            self.discriminator.train()
+            if hasattr(self, "discriminator"):
+                self.discriminator.train()
             update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
 
             num_update = self.train_loop(trainloader, epoch_i, num_update)
@@ -374,7 +379,8 @@ class ModelTrainer:
             # validation
             # set validation mode
             self.generator.eval()
-            self.discriminator.eval()
+            if hasattr(self, "discriminator"):
+                self.discriminator.eval()
             # Initialize dataloader
             max_positions_valid = (args.fixed_max_len, args.fixed_max_len)
             valloader = self.dataset.eval_dataloader(
@@ -408,7 +414,8 @@ class ModelTrainer:
         torch.save(self.generator, open(path, 'wb'), pickle_module=dill)
 
     def save_discriminator(self, path):
-        torch.save(self.discriminator, open(path, 'wb'), pickle_module=dill)
+        if hasattr(self, "discriminator"):
+            torch.save(self.discriminator, open(path, 'wb'), pickle_module=dill)
 
     def save_models(self, epoch_i):
         self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}.pt"))
