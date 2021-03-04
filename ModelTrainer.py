@@ -217,7 +217,6 @@ class ModelTrainer:
         sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
         logging_loss = loss.data / sample_size / math.log(2)
 
-        sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
         nsentences = sample['target'].size(0)
         self.g_logging_meters['bsz'].update(nsentences)
         self.g_logging_meters['train_loss'].update(logging_loss, sample_size)
