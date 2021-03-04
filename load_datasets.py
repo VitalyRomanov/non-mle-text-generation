@@ -19,7 +19,7 @@ def load_cnn_daily_mail():
 
 def load_arxiv():
     dataset = load_dataset("arxiv_dataset", data_dir="~/.manual_dir/arxiv")
-    print()
+    return dataset
 
 def generate_text_compression_dataset():
     dataset = load_text_compression_dataset()
@@ -40,9 +40,31 @@ def generate_text_compression_dataset():
         src="original", tgt="summary"
     )
 
-    # for
+def generate_arxiv_dataset():
+    dataset = load_arxiv()
+
+    def generate(split):
+        for source, target in zip(split["abstract"], split["title"]):
+            # source = sample["abstract"]
+            # target = sample["title"]
+            yield source, target
+
+    dataset_path = os.path.join("data-bin", "arxiv")
+    if not os.path.isdir(dataset_path):
+        os.mkdir(dataset_path)
+
+    train_test = dataset["train"].train_test_split()
+    val_test = train_test["test"].train_test_split()
+
+    write_splits(
+        dataset_path,
+        train=generate(train_test["train"][:10000]), val=generate(val_test["train"][:1000]), test=generate(val_test["test"][:1000]),
+        src="original", tgt="summary"
+    )
+
 
 if __name__ == "__main__":
     generate_text_compression_dataset()
+    generate_arxiv_dataset()
     # load_cnn_daily_mail()
     # load_arxiv()

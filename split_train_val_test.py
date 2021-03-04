@@ -11,6 +11,8 @@ def write_split(split, path, split_name, src, tgt):
     with open(os.path.join(path, f"{split_name}.{src}"), "w", encoding='utf-8') as srcfile:
         with open(os.path.join(path, f"{split_name}.{tgt}"), "w", encoding='utf-8') as tgtfile:
             for s, d in split:
+                s = s.replace("\n", " ")
+                d = d.replace("\n", " ")
                 srcfile.write(f"{s}\n")
                 tgtfile.write(f"{d}\n")
 
@@ -27,7 +29,7 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
     from data import load_raw_text_dataset
     from tokenizer import Tokenizer
 
-    tok = create_subword_tokenizer("en", 100000)
+    tok = create_subword_tokenizer("en", 200000)
     def tokenize(text):
         return [t for t in tok(text.replace("\n", " "))]
 
@@ -40,14 +42,23 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
 
     dataset = load_raw_text_dataset(path, ["train", "valid", "test"], src, tgt, maxlen=None)
 
+    len_src = 0
+    len_tgt = 0
+
     for split in ["train", "valid", "test"]:
         src_bin = IndexedDatasetBuilder(os.path.join(path, f"{split}.{src}-{tgt}.{src}.bin"))
         tgt_bin = IndexedDatasetBuilder(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.bin"))
+        assert len(dataset.splits[split].src) == len(dataset.splits[split].dst)
         for i in range(len(dataset.splits[split].src)):
-            src_bin.add_item(dataset.splits[split].src[i])
-            tgt_bin.add_item(dataset.splits[split].dst[i])
+            src_bin.add_item(dataset.splits[split].src[i]-1)
+            tgt_bin.add_item(dataset.splits[split].dst[i]-1)
+            len_src += len(dataset.splits[split].src[i])
+            len_tgt += len(dataset.splits[split].dst[i])
         src_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{src}.idx"))
         tgt_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.idx"))
+
+    print(f"Source average length {len_src / len(dataset.splits[split].src)}")
+    print(f"Target average length {len_tgt / len(dataset.splits[split].dst)}")
 
 
 
