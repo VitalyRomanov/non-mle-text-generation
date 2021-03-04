@@ -14,22 +14,28 @@ class LSTMModel(nn.Module):
         self.dst_dict = dst_dict
 
         # Initialize encoder and decoder
+        self.create_encoder(args)
+        self.create_decoder(args)
+
+    def create_encoder(self, args):
         self.encoder = LSTMEncoder(
-            src_dict,
+            self.src_dict,
             embed_dim=args.encoder_embed_dim,
             num_layers=args.encoder_layers,
             dropout_in=args.encoder_dropout_in,
             dropout_out=args.encoder_dropout_out,
         )
+
+    def create_decoder(self, args):
         self.decoder = LSTMDecoder(
-            dst_dict,
+            self.dst_dict,
             encoder_embed_dim=args.encoder_embed_dim,
             embed_dim=args.decoder_embed_dim,
             out_embed_dim=args.decoder_out_embed_dim,
             num_layers=args.decoder_layers,
             dropout_in=args.decoder_dropout_in,
             dropout_out=args.decoder_dropout_out,
-            use_cuda=use_cuda
+            use_cuda=self.use_cuda
         )
 
     def forward(self, sample):
@@ -60,6 +66,33 @@ class LSTMModel(nn.Module):
             return F.log_softmax(net_output1, dim=1).view_as(net_output)
         else:
             return F.softmax(net_output1, dim=1).view_as(net_output)
+
+
+class VarLSTMModel(LSTMModel):
+    def __init__(self, args, src_dict, dst_dict, use_cuda=True):
+        super(VarLSTMModel, self).__init__(args, src_dict, dst_dict, use_cuda=use_cuda)
+
+    def create_decoder(self, args):
+        self.decoder = VarLSTMDecoder(
+            self.dst_dict,
+            encoder_embed_dim=args.encoder_embed_dim,
+            embed_dim=args.decoder_embed_dim,
+            out_embed_dim=args.decoder_out_embed_dim,
+            num_layers=args.decoder_layers,
+            dropout_in=args.decoder_dropout_in,
+            dropout_out=args.decoder_dropout_out,
+            use_cuda=self.use_cuda
+        )
+
+    def forward(self, sample):
+        encoder_out = self.encoder(sample['net_input']['src_tokens'],
+                                   sample['net_input']['src_lengths'])  # TODO what is net input
+
+        decoder_out, attn_scores, kld = self.decoder(sample['net_input']['prev_output_tokens'], encoder_out)
+        decoder_out = F.log_softmax(decoder_out, dim=2)
+
+        return decoder_out, kld
+
 
 class LSTMEncoder(nn.Module):
     """LSTM encoder."""
@@ -337,7 +370,8 @@ class VarLSTMDecoder(LSTMDecoder):
             input = torch.cat((x[j, :, :], input_feed), dim=1)
 
             z, mu, logvar = self.reparameterize(prev_hiddens[0])
-            input = torch.cat([input, z])
+            input = torch.cat([input, z], dim=1)
+            kld += self.compute_kld(mu, logvar)
 
             for i, rnn in enumerate(self.layers):
                 # recurrent cell
