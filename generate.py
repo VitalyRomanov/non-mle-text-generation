@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser(
     description="Driver program for JHU Adversarial-NMT.")
 
 # Load args
-parser.add_argument("model_name")
+parser.add_argument("--model_name", default=None)
 options.add_general_args(parser)
 options.add_dataset_args(parser)
 options.add_checkpoint_args(parser)
@@ -30,6 +30,7 @@ options.add_generator_model_args(parser)
 def main(args):
 
     model_name = options.model_name
+    assert model_name is not None
     if model_name == "gan":
         Model = LSTMModel
     elif model_name == "vae":

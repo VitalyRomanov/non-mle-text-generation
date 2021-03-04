@@ -19,7 +19,8 @@ logging.basicConfig(
 parser = argparse.ArgumentParser(description="Adversarial-NMT.")
 
 # Load args
-parser.add_argument("model_name")
+parser.add_argument("--model_name", default=None)
+parser.add_argument("--note", default=None)
 options.add_general_args(parser)
 options.add_dataset_args(parser)
 options.add_distributed_training_args(parser)
@@ -141,6 +142,8 @@ if __name__ == "__main__":
     if ret[1]:
         logging.warning(f"unknown arguments: {parser.parse_known_args()[1]}")
     model_name = options.model_name
+    assert model_name is not None
+    # options.note = None
     if model_name == "gan":
         trainer = GanLSTMTrainer(options)
     elif model_name == "vae":
