@@ -143,7 +143,7 @@ if __name__ == "__main__":
     model_name = options.model_name
     if model_name == "gan":
         trainer = GanLSTMTrainer(options)
-    elif model_name == "var":
+    elif model_name == "vae":
         trainer = VarLSTMTrainer(options)
     elif model_name == "mle":
         trainer = LstmMleTrainer(options)
