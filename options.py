@@ -94,7 +94,7 @@ def add_optimization_args(parser):
 
 
 def add_checkpoint_args(parser):
-    parser.add_argument("--model_file", help="Location to dump the models.")
+    parser.add_argument("--model_file", default=None, help="Location to dump the models.")
     return parser
 
 def add_generator_model_args(parser):

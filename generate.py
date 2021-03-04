@@ -78,7 +78,11 @@ def main(args):
     args.bidirectional = False
 
     # Load model
-    g_model_path = 'checkpoint/LSTMTrainer2021-03-04 12:23:31.688195/best_gmodel.pt'
+    if args.model_file is None:
+        g_model_path = 'checkpoint/VAE_2021-03-04 12:16:21/best_gmodel.pt'
+    else:
+        g_model_path = args.model_file
+
     assert os.path.exists(g_model_path)
     generator = Model(args, dataset.src_dict,
                           dataset.dst_dict, use_cuda=use_cuda)
