@@ -17,6 +17,7 @@ logging.basicConfig(
 parser = argparse.ArgumentParser(description="Adversarial-NMT.")
 
 # Load args
+parser.add_argument("model_name")
 options.add_general_args(parser)
 options.add_dataset_args(parser)
 options.add_distributed_training_args(parser)
@@ -27,7 +28,7 @@ options.add_discriminator_model_args(parser)
 options.add_generation_args(parser)
 
 
-class LSTMTrainer(ModelTrainer):
+class GanLSTMTrainer(ModelTrainer):
     def create_generator(self, args):
         # self.generator = LSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
         self.generator = VarLSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
@@ -79,5 +80,12 @@ if __name__ == "__main__":
     options = ret[0]
     if ret[1]:
         logging.warning(f"unknown arguments: {parser.parse_known_args()[1]}")
-    trainer = VarLSTMTrainer(options)
+    model_name = options.model_name
+    if model_name == "gan":
+        trainer = GanLSTMTrainer(options)
+    elif model_name == "var":
+        trainer = VarLSTMTrainer(options)
+    elif model_name == "mle":
+        pass
+        # trainer =
     trainer.train()
