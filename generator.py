@@ -153,15 +153,18 @@ class LSTMDecoder(nn.Module):
         padding_idx = dictionary.pad()
         self.embed_tokens = Embedding(num_embeddings, embed_dim, padding_idx)
 
-        self.layers = nn.ModuleList([
-            LSTMCell(encoder_embed_dim + embed_dim if layer == 0 else embed_dim, embed_dim)
-            for layer in range(num_layers)
-        ])
+        self.create_layers(encoder_embed_dim, embed_dim, num_layers)
+
         self.attention = AttentionLayer(encoder_embed_dim, embed_dim)
         if embed_dim != out_embed_dim:
             self.additional_fc = Linear(embed_dim, out_embed_dim)
         self.fc_out = Linear(out_embed_dim, num_embeddings, dropout=dropout_out)
 
+    def create_layers(self, encoder_embed_dim, embed_dim, num_layers):
+        self.layers = nn.ModuleList([
+            LSTMCell(encoder_embed_dim + embed_dim if layer == 0 else embed_dim, embed_dim)
+            for layer in range(num_layers)
+        ])
 
     def forward(self, prev_output_tokens, encoder_out, incremental_state=None):
         if incremental_state is not None:  # TODO what is this?
@@ -253,6 +256,124 @@ class LSTMDecoder(nn.Module):
             new_order = Variable(new_order)
         new_state = tuple(map(reorder_state, cached_state))
         utils.set_incremental_state(self, incremental_state, 'cached_state', new_state)
+
+
+class VarLSTMDecoder(LSTMDecoder):
+    def __init__(self, dictionary, encoder_embed_dim=512, embed_dim=512,
+                 out_embed_dim=512, num_layers=1, dropout_in=0.1,
+                 dropout_out=0.1, use_cuda=True):
+        super(VarLSTMDecoder, self).__init__(
+            dictionary, encoder_embed_dim=encoder_embed_dim, embed_dim=embed_dim,
+            out_embed_dim=out_embed_dim, num_layers=num_layers, dropout_in=dropout_in,
+            dropout_out=dropout_out, use_cuda=use_cuda
+        )
+
+        self.context_to_mu = nn.Linear(embed_dim, embed_dim)
+        self.context_to_logvar = nn.Linear(embed_dim, embed_dim)
+
+    def create_layers(self, encoder_embed_dim, embed_dim, num_layers):
+        # encoder_embed_dim * 2 for latent code
+        self.layers = nn.ModuleList([
+            LSTMCell(encoder_embed_dim * 2 + embed_dim if layer == 0 else embed_dim, embed_dim)
+            for layer in range(num_layers)
+        ])
+
+    def modify_state(self, hidden_state):
+        return self.reparameterize(hidden_state)
+
+    def reparameterize(self, hidden):
+        """
+        context [B x 2H]
+        """
+        mu = self.context_to_mu(hidden)
+        logvar = self.context_to_logvar(hidden)
+        if self.training:
+            std = logvar.mul(0.5).exp_()
+            eps = Variable(std.data.new(std.size()).normal_())
+            z = eps.mul(std).add_(mu)
+        else:
+            z = mu
+        return z, mu, logvar
+
+    def compute_kld(self, mu, logvar):
+        kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return kld
+
+    def forward(self, prev_output_tokens, encoder_out, incremental_state=None):
+        if incremental_state is not None:  # TODO what is this?
+            prev_output_tokens = prev_output_tokens[:, -1:]
+        bsz, seqlen = prev_output_tokens.size()
+
+        # get outputs from encoder
+        encoder_outs, _, _ = encoder_out
+        srclen = encoder_outs.size(0)
+
+        x = self.embed_tokens(prev_output_tokens) # (bze, seqlen, embed_dim)
+        x = F.dropout(x, p=self.dropout_in, training=self.training)
+        embed_dim = x.size(2)
+
+        x = x.transpose(0, 1) # (seqlen, bsz, embed_dim)
+
+        # initialize previous states (or get from cache during incremental generation)
+        # cached_state = utils.get_incremental_state(self, incremental_state, 'cached_state')
+        # initialize previous states (or get from cache during incremental generation)
+        cached_state = utils.get_incremental_state(self, incremental_state, 'cached_state')
+
+        if cached_state is not None:
+            prev_hiddens, prev_cells, input_feed = cached_state
+        else:
+            _, encoder_hiddens, encoder_cells = encoder_out
+            num_layers = len(self.layers)
+            prev_hiddens = [encoder_hiddens[i] for i in range(num_layers)]
+            prev_cells = [encoder_cells[i] for i in range(num_layers)]
+            input_feed = Variable(x.data.new(bsz, embed_dim).zero_())
+
+        attn_scores = Variable(x.data.new(srclen, seqlen, bsz).zero_())
+        outs = []
+
+        kld = 0.
+        for j in range(seqlen):
+            # input feeding: concatenate context vector from previous time step
+            input = torch.cat((x[j, :, :], input_feed), dim=1)
+
+            z, mu, logvar = self.reparameterize(prev_hiddens[0])
+            input = torch.cat([input, z])
+
+            for i, rnn in enumerate(self.layers):
+                # recurrent cell
+                hidden, cell = rnn(input, (prev_hiddens[i], prev_cells[i]))
+
+                # hidden state becomes the input to the next layer
+                input = F.dropout(hidden, p=self.dropout_out, training=self.training)
+
+                # save state for next time step
+                prev_hiddens[i] = hidden
+                prev_cells[i] = cell
+
+            # apply attention using the last layer's hidden state
+            out, attn_scores[:, j, :] = self.attention(hidden, encoder_outs)
+            out = F.dropout(out, p=self.dropout_out, training=self.training)
+
+            # input feeding
+            input_feed = out
+
+            # save final output
+            outs.append(out)
+
+        # cache previous states (no-op except during incremental generation)
+        utils.set_incremental_state(
+            self, incremental_state, 'cached_state', (prev_hiddens, prev_cells, input_feed))
+
+        # collect outputs across time steps
+        x = torch.cat(outs, dim=0).view(seqlen, bsz, embed_dim)
+        # T x B x C -> B x T x C
+        x = x.transpose(1, 0)
+        # srclen x tgtlen x bsz -> bsz x tgtlen x srclen
+        attn_scores = attn_scores.transpose(0, 2)
+
+        x = self.fc_out(x)
+
+        return x, attn_scores, kld
 
 
 # TODO why they use this specific initialization
