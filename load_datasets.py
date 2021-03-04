@@ -58,7 +58,7 @@ def generate_arxiv_dataset():
 
     write_splits(
         dataset_path,
-        train=generate(train_test["train"][:10000]), val=generate(val_test["train"][:1000]), test=generate(val_test["test"][:1000]),
+        train=generate(train_test["train"][:20000]), val=generate(val_test["train"][:3000]), test=generate(val_test["test"][:3000]),
         src="original", tgt="summary"
     )
 
