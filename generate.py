@@ -6,7 +6,7 @@ import os
 from torch import cuda
 import options
 import data
-from generator import LSTMModel
+from generator import LSTMModel, VarLSTMModel
 
 from sequence_generator import SequenceGenerator
 
@@ -60,23 +60,23 @@ def main(args):
             args.data, 'test', len(dataset.splits['test'])))
 
     # Set model parameters
-    # args.encoder_embed_dim = 1000
-    # args.encoder_layers = 1
-    # args.encoder_dropout_out = 0
-    # args.decoder_embed_dim = 1000
-    # args.decoder_layers = 2
-    # args.decoder_out_embed_dim = 1000
-    # args.decoder_dropout_out = 0
-    # args.bidirectional = False
+    args.encoder_embed_dim = 128
+    args.encoder_layers = 2  # 4
+    args.encoder_dropout_out = 0
+    args.decoder_embed_dim = 128
+    args.decoder_layers = 2  # 4
+    args.decoder_out_embed_dim = 128
+    args.decoder_dropout_out = 0
+    args.bidirectional = False
 
     # Load model
-    g_model_path = 'checkpoints/generator/best_gmodel.pt'
+    g_model_path = 'checkpoint/LSTMTrainer2021-03-04 12:23:31.688195/best_gmodel.pt'
     assert os.path.exists(g_model_path)
     generator = LSTMModel(args, dataset.src_dict,
                           dataset.dst_dict, use_cuda=use_cuda)
     model_dict = generator.state_dict()
     model = torch.load(g_model_path)
-    pretrained_dict = model #.state_dict()
+    pretrained_dict = model.state_dict()
     # 1. filter out unnecessary keys
     pretrained_dict = {k: v for k,
                        v in pretrained_dict.items() if k in model_dict}
