@@ -1,6 +1,55 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F 
+import torch.nn.functional as F
+
+
+class AttDiscriminator(nn.Module):
+    def __init__(self, args, src_dict, dst_dict, use_cuda=True, dropout=0.1, num_heads=1):
+        super(AttDiscriminator, self).__init__()
+
+        self.src_dict_size = len(src_dict)
+        self.trg_dict_size = len(dst_dict)
+
+        self.src_pad_idx = src_dict.pad()
+        self.pad_idx = dst_dict.pad()
+        self.fixed_max_len = args.fixed_max_len
+        self.use_cuda = use_cuda
+
+        assert args.encoder_embed_dim == args.decoder_embed_dim
+
+        emb_dim = args.encoder_embed_dim
+
+        # TODO share this across encoder and decoder
+        self.embed_src_tokens = Embedding(len(src_dict), emb_dim, src_dict.pad())
+        self.embed_trg_tokens = Embedding(len(dst_dict), emb_dim, dst_dict.pad())
+
+        self.attention = nn.MultiheadAttention(emb_dim, num_heads=num_heads, dropout=dropout)
+        self.input_proj = Linear(emb_dim * num_heads, 1, bias=False)
+        self.prediction = Linear(emb_dim * num_heads, 1, bias=False)
+
+    def forward(self, src_sentence, trg_sentence):
+        src_out = self.embed_src_tokens(src_sentence)
+        trg_out = self.embed_src_tokens(trg_sentence)
+
+        src_mask = src_sentence == self.src_pad_idx
+        trg_mask = trg_sentence == self.pad_idx
+
+        input = torch.cat([src_out, trg_out], dim=1)
+        input_mask = torch.cat([src_mask, trg_mask], dim=1)
+
+        query = key = value = input.permute(1, 0, 2)
+
+        mh_att, _ = self.attention(query, key, value, key_padding_mask=input_mask)
+        mh_att = mh_att.permute(1, 0, 2)
+
+        attn_logits = self.input_proj(mh_att)
+        attn_logits = attn_logits.squeeze(2)
+        attn_scores = F.softmax(attn_logits, dim=1).unsqueeze(2)
+
+        x = (attn_scores * mh_att).sum(dim=1)
+
+        logits =  self.prediction(x)
+        return torch.sigmoid(logits)
 
 
 class Discriminator(nn.Module):
@@ -12,7 +61,6 @@ class Discriminator(nn.Module):
         self.pad_idx = dst_dict.pad()
         self.fixed_max_len = args.fixed_max_len
         self.use_cuda = use_cuda
-
 
         self.embed_src_tokens = Embedding(len(src_dict), args.encoder_embed_dim, src_dict.pad())
         self.embed_trg_tokens = Embedding(len(dst_dict), args.decoder_embed_dim, dst_dict.pad())
