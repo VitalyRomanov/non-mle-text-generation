@@ -1,3 +1,4 @@
+import json
 import math
 from abc import abstractmethod
 from datetime import datetime
@@ -409,6 +410,8 @@ class ModelTrainer:
     def save_models(self, epoch_i):
         self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}.pt"))
         self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_discr.pt"))
+        with open(os.path.join(self.checkpoints_path, "params.json"), "w") as paramsink:
+            paramsink.write(json.dumps(self.args.__dict__, indent=4))
 
 
 def update_learning_rate(update_times, target_times, init_lr, lr_shrink, optimizer):
