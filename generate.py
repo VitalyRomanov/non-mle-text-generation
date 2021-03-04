@@ -29,7 +29,7 @@ options.add_generator_model_args(parser)
 
 def main(args):
 
-    model_name = options.model_name
+    model_name = args.model_name
     assert model_name is not None
     if model_name == "gan":
         Model = LSTMModel
