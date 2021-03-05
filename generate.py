@@ -88,7 +88,7 @@ def main(args):
     else:
         g_model_path = args.model_file
 
-    assert os.path.exists(g_model_path)
+    assert os.path.exists(g_model_path), f"Path does not exist {g_model_path}"
     generator = Model(args, dataset.src_dict,
                           dataset.dst_dict, use_cuda=use_cuda)
     model_dict = generator.state_dict()
