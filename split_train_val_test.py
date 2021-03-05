@@ -29,7 +29,7 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
     from data import load_raw_text_dataset
     from tokenizer import Tokenizer
 
-    tok = create_subword_tokenizer("en", 200000)
+    tok = create_subword_tokenizer("multi", 1000000)
     def tokenize(text):
         return [t for t in tok(text.replace("\n", " "))]
 
@@ -40,7 +40,7 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
     create_dictionary(src)
     create_dictionary(tgt)
 
-    dataset = load_raw_text_dataset(path, ["train", "valid", "test"], src, tgt, maxlen=None)
+    dataset = load_raw_text_dataset(path, ["train", "valid", "test"], src, tgt, maxlen=None, tokenize_fn=tokenize)
 
     len_src = 0
     len_tgt = 0

@@ -10,7 +10,7 @@ import os
 import struct
 import torch
 
-from tokenizer import Tokenizer
+from tokenizer import Tokenizer, tokenize_line
 
 
 def read_longs(f, n):
@@ -107,10 +107,11 @@ class IndexedRawTextDataset(IndexedDataset):
     """Takes a text file as input and binarizes it in memory at instantiation.
     Original lines are also kept in memory"""
 
-    def __init__(self, path, dictionary):
+    def __init__(self, path, dictionary, tokenize_fn=None):
         self.tokens_list = []
         self.lines = []
         self.sizes = []
+        self.tokenize_fn = tokenize_fn if tokenize_fn is not None else tokenize_line
         self.read_data(path, dictionary)
         self.size = len(self.tokens_list)
 
@@ -119,7 +120,7 @@ class IndexedRawTextDataset(IndexedDataset):
             for line in f:
                 self.lines.append(line.strip('\n'))
                 # +1 for Lua compatibility
-                tokens = Tokenizer.tokenize(line, dictionary, add_if_not_exist=False) + 1
+                tokens = Tokenizer.tokenize(line, dictionary, tokenize=self.tokenize_fn, add_if_not_exist=False) + 1
                 self.tokens_list.append(tokens)
                 self.sizes.append(len(tokens))
         self.sizes = np.array(self.sizes)

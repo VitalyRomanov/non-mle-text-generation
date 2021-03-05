@@ -103,7 +103,7 @@ def load_dataset(path, load_splits, src=None, dst=None, maxlen=None):
     return dataset
 
 
-def load_raw_text_dataset(path, load_splits, src=None, dst=None, maxlen=None):
+def load_raw_text_dataset(path, load_splits, src=None, dst=None, maxlen=None, tokenize_fn=None):
     """Loads specified data splits (e.g., test, train or valid) from raw text
     files in the specified folder."""
     if src is None and dst is None:
@@ -119,8 +119,8 @@ def load_raw_text_dataset(path, load_splits, src=None, dst=None, maxlen=None):
         src_path = os.path.join(path, '{}.{}'.format(split, src))
         dst_path = os.path.join(path, '{}.{}'.format(split, dst))
         dataset.splits[split] = LanguagePairDataset(
-            IndexedRawTextDataset(src_path, src_dict),
-            IndexedRawTextDataset(dst_path, dst_dict),
+            IndexedRawTextDataset(src_path, src_dict, tokenize_fn=tokenize_fn),
+            IndexedRawTextDataset(dst_path, dst_dict, tokenize_fn=tokenize_fn),
             pad_idx=dataset.src_dict.pad(),
             eos_idx=dataset.src_dict.eos(),
             maxlen=maxlen
