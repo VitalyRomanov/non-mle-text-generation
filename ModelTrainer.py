@@ -135,9 +135,10 @@ class ModelTrainer:
     def create_output_path(self, args):
         # adversarial training checkpoints saving path
         if args.note is None:
-            path = os.path.join(args.model_file, self.__class__.__name__ + " " + str(datetime.now()))
+            name = self.__class__.__name__ + " " + str(datetime.now())
         else:
-            path = os.path.join(args.model_file, self.__class__.__name__ + " " + args.note)
+            name = self.__class__.__name__ + " " + args.note
+        path = os.path.join(args.model_file, name.replace(" ","_"))
         if not os.path.exists(path):
             os.makedirs(path)
         self.checkpoints_path = path
