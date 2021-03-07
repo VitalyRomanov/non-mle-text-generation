@@ -32,6 +32,7 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
     tok = create_subword_tokenizer("multi", 1000000)
     def tokenize(text):
         return [t for t in tok(text.replace("\n", " "))]
+    # tokenize = tokenize_line
 
     def create_dictionary(direction):
         dict_ = Tokenizer.build_dictionary(os.path.join(path, f"train.{direction}"), tokenize=tokenize)

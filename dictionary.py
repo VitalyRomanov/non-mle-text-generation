@@ -136,7 +136,7 @@ class Dictionary(object):
             d.count.append(count)
         return d
 
-    def save(self, f, threshold=3, nwords=-1):
+    def save(self, f, threshold=0, nwords=-1):
         """Stores dictionary into a text file"""
         if isinstance(f, str):
             with open(f, 'w', encoding='utf-8') as fd:
