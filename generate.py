@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 
 import torch
@@ -40,37 +41,41 @@ def main(args):
     else:
         raise Exception("Model name should be: gan|vae|mle")
 
-    use_cuda = (len(args.gpuid) >= 1)
-    if args.gpuid:
+    if len(args.gpuid) >= 1 and args.gpuid[0] >= 0:
+        use_cuda = True
         cuda.set_device(args.gpuid[0])
+        map_to = torch.device(f"cuda:{args.gpuid[0]}")
+    else:
+        use_cuda = False
+        map_to = torch.device('cpu')
 
-        # Load dataset
-        # if args.replace_unk is None:
-        if data.has_binary_files(args.data, ['test']):
-            dataset = data.load_dataset(
-                args.data,
-                ['test'],
-                args.src_lang,
-                args.trg_lang,
-            )
-        else:
-            dataset = data.load_raw_text_dataset(
-                args.data,
-                ['test'],
-                args.src_lang,
-                args.trg_lang,
-            )
+    # Load dataset
+    # if args.replace_unk is None:
+    if data.has_binary_files(args.data, ['test']):
+        dataset = data.load_dataset(
+            args.data,
+            ['test'],
+            args.src_lang,
+            args.trg_lang,
+        )
+    else:
+        dataset = data.load_raw_text_dataset(
+            args.data,
+            ['test'],
+            args.src_lang,
+            args.trg_lang,
+        )
 
-        if args.src_lang is None or args.trg_lang is None:
-            # record inferred languages in args, so that it's saved in checkpoints
-            args.src_lang, args.trg_lang = dataset.src, dataset.dst
+    if args.src_lang is None or args.trg_lang is None:
+        # record inferred languages in args, so that it's saved in checkpoints
+        args.src_lang, args.trg_lang = dataset.src, dataset.dst
 
-        print('| [{}] dictionary: {} types'.format(
-            dataset.src, len(dataset.src_dict)))
-        print('| [{}] dictionary: {} types'.format(
-            dataset.dst, len(dataset.dst_dict)))
-        print('| {} {} {} examples'.format(
-            args.data, 'test', len(dataset.splits['test'])))
+    print('| [{}] dictionary: {} types'.format(
+        dataset.src, len(dataset.src_dict)))
+    print('| [{}] dictionary: {} types'.format(
+        dataset.dst, len(dataset.dst_dict)))
+    print('| {} {} {} examples'.format(
+        args.data, 'test', len(dataset.splits['test'])))
 
     # Set model parameters
     args.encoder_embed_dim = 128
@@ -88,11 +93,17 @@ def main(args):
     else:
         g_model_path = args.model_file
 
+    def load_params():
+        params = json.loads(open(os.path.join(os.path.dirname(g_model_path), "params.json")).read())
+        args.__dict__.update(params)
+
+    load_params()
+
     assert os.path.exists(g_model_path), f"Path does not exist {g_model_path}"
     generator = Model(args, dataset.src_dict,
                           dataset.dst_dict, use_cuda=use_cuda)
     model_dict = generator.state_dict()
-    model = torch.load(g_model_path)
+    model = torch.load(g_model_path, map_location=map_to)
     pretrained_dict = model.state_dict()
     # 1. filter out unnecessary keys
     pretrained_dict = {k: v for k,
@@ -149,8 +160,10 @@ def main(args):
                     hypo_str += '\n'
                     target_str += '\n'
 
-                    translation_writer.write(hypo_str.encode('utf-8'))
-                    ground_truth_writer.write(target_str.encode('utf-8'))
+                    # translation_writer.write(hypo_str.encode('utf-8'))
+                    # ground_truth_writer.write(target_str.encode('utf-8'))
+                    translation_writer.write(hypo_str)
+                    ground_truth_writer.write(target_str)
 
 
 if __name__ == "__main__":
