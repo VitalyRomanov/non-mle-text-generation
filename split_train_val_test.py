@@ -36,7 +36,11 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None, toke
             return [t for t in tok(text.replace("\n", " "))]
         logging.warning("Using bpe tokenizer")
     else:
-        tokenize = tokenize_line
+        from nltk import RegexpTokenizer
+        tokenizer = RegexpTokenizer("[\w]+|[^\w\s]")
+        # tokenize = tokenize_line
+        def tokenize(text):
+            return tokenizer.tokenize(text.replace("\n", " "))
         logging.warning("Using regular tokenizer")
 
     def create_dictionary(direction):
