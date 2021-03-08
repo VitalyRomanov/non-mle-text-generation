@@ -27,6 +27,8 @@ def make_variable(sample, cuda=False):
             if cuda and torch.cuda.is_available():
                 maybe_tensor = maybe_tensor.cuda()
                 return Variable(maybe_tensor)
+            else:
+                return Variable(maybe_tensor)
         elif isinstance(maybe_tensor, dict):
             return {
                 key: _make_variable(value)
