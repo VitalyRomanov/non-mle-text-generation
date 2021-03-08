@@ -55,7 +55,7 @@ class Dictionary(object):
                 return self[i]
 
         # find the (first) EOS token
-        eos_idx = (tensor == self.eos()).nonzero()[0] if len((tensor == self.eos()).nonzero()) > 0 else -1
+        eos_idx = (tensor == self.eos()).nonzero(as_tuple=False)[0] if len((tensor == self.eos()).nonzero(as_tuple=False)) > 0 else -1
         # ignore the tokens after EOS
         tensor = tensor[:eos_idx]
         # obtain the raw words
