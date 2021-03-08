@@ -21,7 +21,7 @@ def load_arxiv():
     dataset = load_dataset("arxiv_dataset", data_dir="~/.manual_dir/arxiv")
     return dataset
 
-def generate_text_compression_dataset():
+def generate_text_compression_dataset(args):
     dataset = load_text_compression_dataset()
 
     def generate(split):
@@ -30,17 +30,17 @@ def generate_text_compression_dataset():
             for target in sample["targets"]["compressed_text"]:
                 yield source, target
 
-    dataset_path = os.path.join("data-bin", "text_compression")
+    dataset_path = os.path.join(args.output, "text_compression")
     if not os.path.isdir(dataset_path):
         os.mkdir(dataset_path)
 
     write_splits(
         dataset_path,
         train=generate(dataset["train"]), val=generate(dataset["validation"]), test=generate(dataset["test"]),
-        src="original", tgt="summary"
+        src="original", tgt="summary", tokenizer=args.tokenizer
     )
 
-def generate_arxiv_dataset():
+def generate_arxiv_dataset(args):
     dataset = load_arxiv()
 
     def generate(split):
@@ -49,7 +49,7 @@ def generate_arxiv_dataset():
             # target = sample["title"]
             yield source, target
 
-    dataset_path = os.path.join("data-bin", "arxiv")
+    dataset_path = os.path.join(args.output, "arxiv")
     if not os.path.isdir(dataset_path):
         os.mkdir(dataset_path)
 
@@ -59,12 +59,18 @@ def generate_arxiv_dataset():
     write_splits(
         dataset_path,
         train=generate(train_test["train"][:20000]), val=generate(val_test["train"][:3000]), test=generate(val_test["test"][:3000]),
-        src="original", tgt="summary"
+        src="original", tgt="summary", tokenizer=args.tokenizer
     )
 
 
 if __name__ == "__main__":
-    generate_text_compression_dataset()
-    generate_arxiv_dataset()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--tokenizer", default="regular", help="regular|bpe")
+    parser.add_argument("--output", default="data-bin")
+
+    args = parser.parse_args()
+    generate_text_compression_dataset(args)
+    generate_arxiv_dataset(args)
     # load_cnn_daily_mail()
     # load_arxiv()
