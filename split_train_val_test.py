@@ -3,8 +3,9 @@ import os
 
 import torch
 
+from data import load_dictionaries
 from indexed_dataset import IndexedDatasetBuilder
-from tokenizer import create_subword_tokenizer
+from tokenizer import create_subword_tokenizer, tokenize_line
 
 
 def write_split(split, path, split_name, src, tgt):
@@ -18,7 +19,7 @@ def write_split(split, path, split_name, src, tgt):
 
 
 
-def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
+def write_splits(path, train=None, val=None, test=None, src=None, tgt=None, tokenizer=None):
     assert src is not None and tgt is not None
     assert train is not None and val is not None and test is not None
 
@@ -29,10 +30,14 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
     from data import load_raw_text_dataset
     from tokenizer import Tokenizer
 
-    tok = create_subword_tokenizer("multi", 1000000)
-    def tokenize(text):
-        return [t for t in tok(text.replace("\n", " "))]
-    # tokenize = tokenize_line
+    if tokenizer == "bpe":
+        tok = create_subword_tokenizer("multi", 1000000)
+        def tokenize(text):
+            return [t for t in tok(text.replace("\n", " "))]
+        logging.warning("Using bpe tokenizer")
+    else:
+        tokenize = tokenize_line
+        logging.warning("Using regular tokenizer")
 
     def create_dictionary(direction):
         dict_ = Tokenizer.build_dictionary(os.path.join(path, f"train.{direction}"), tokenize=tokenize)
@@ -41,25 +46,32 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None):
     create_dictionary(src)
     create_dictionary(tgt)
 
-    dataset = load_raw_text_dataset(path, ["train", "valid", "test"], src, tgt, maxlen=None, tokenize_fn=tokenize)
+    # dataset = load_raw_text_dataset(path, ["train", "valid", "test"], src, tgt, maxlen=None, tokenize_fn=tokenize)
 
     len_src = 0
     len_tgt = 0
 
+    src_dict, tgt_dict = load_dictionaries(path, src, tgt)
+
     for split in ["train", "valid", "test"]:
         src_bin = IndexedDatasetBuilder(os.path.join(path, f"{split}.{src}-{tgt}.{src}.bin"))
         tgt_bin = IndexedDatasetBuilder(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.bin"))
-        assert len(dataset.splits[split].src) == len(dataset.splits[split].dst)
-        for i in range(len(dataset.splits[split].src)):
-            src_bin.add_item(dataset.splits[split].src[i]-1)
-            tgt_bin.add_item(dataset.splits[split].dst[i]-1)
-            len_src += len(dataset.splits[split].src[i])
-            len_tgt += len(dataset.splits[split].dst[i])
+
+        src_lines = open(os.path.join(path, f"{split}.{src}")).readlines()
+        tgt_lines = open(os.path.join(path, f"{split}.{tgt}")).readlines()
+        assert len(src_lines) == len(tgt_lines)
+        for src_line, tgt_line in zip(src_lines, tgt_lines):
+            src_tokens = Tokenizer.tokenize(src_line.strip("\n"), src_dict, tokenize=tokenize, add_if_not_exist=False)
+            tgt_tokens = Tokenizer.tokenize(tgt_line.strip("\n"), tgt_dict, tokenize=tokenize, add_if_not_exist=False)
+            src_bin.add_item(src_tokens)
+            tgt_bin.add_item(tgt_tokens)
+            len_src += len(src_tokens)
+            len_tgt += len(tgt_tokens)
         src_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{src}.idx"))
         tgt_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.idx"))
 
-    print(f"Source average length {len_src / len(dataset.splits[split].src)}")
-    print(f"Target average length {len_tgt / len(dataset.splits[split].dst)}")
+    print(f"Source average length {len_src / len(src_dict)}")
+    print(f"Target average length {len_tgt / len(tgt_dict)}")
 
 
 
