@@ -44,6 +44,7 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None, toke
         logging.warning("Using regular tokenizer")
 
     def create_dictionary(direction):
+        logging.warning("Only train set is used for generating the dictionary")
         dict_ = Tokenizer.build_dictionary(os.path.join(path, f"train.{direction}"), tokenize=tokenize)
         dict_.save(os.path.join(path, f"dict.{direction}.txt"))
 
