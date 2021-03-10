@@ -59,7 +59,7 @@ def generate_arxiv_dataset(args):
 
     write_splits(
         dataset_path,
-        train=generate(train_test["train"][:20000]), val=generate(val_test["train"][:3000]), test=generate(val_test["test"][:3000]),
+        train=generate(train_test["train"]), val=generate(val_test["train"]), test=generate(val_test["test"]),
         src="original", tgt="summary", tokenizer=args.tokenizer
     )
 
@@ -72,6 +72,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     generate_text_compression_dataset(args)
-    # generate_arxiv_dataset(args)
+    generate_arxiv_dataset(args)
     # load_cnn_daily_mail()
     # load_arxiv()
