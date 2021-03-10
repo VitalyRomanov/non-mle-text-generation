@@ -138,8 +138,8 @@ def main(args):
     if use_cuda:
         translator.cuda()
 
-    with open('predictions.txt', 'wb') as translation_writer:
-        with open('real.txt', 'wb') as ground_truth_writer:
+    with open('predictions.txt', 'w') as translation_writer:
+        with open('real.txt', 'w') as ground_truth_writer:
 
             translations = translator.generate_batched_itr(
                 testloader, maxlen_a=args.max_len_a, maxlen_b=args.max_len_b, cuda=use_cuda)
