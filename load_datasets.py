@@ -29,6 +29,7 @@ def generate_text_compression_dataset(args):
             source = sample["source_text"]
             for target in sample["targets"]["compressed_text"]:
                 yield source, target
+                break
 
     dataset_path = os.path.join(args.output, "text_compression")
     if not os.path.isdir(dataset_path):
@@ -71,6 +72,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     generate_text_compression_dataset(args)
-    generate_arxiv_dataset(args)
+    # generate_arxiv_dataset(args)
     # load_cnn_daily_mail()
     # load_arxiv()
