@@ -281,16 +281,16 @@ class SequenceGenerator(object):
             eos_mask = cand_indices.eq(self.eos)
             if step >= self.minlen:
                 # only consider eos when it's among the top beam_size indices
-                torch.masked_select(
+                eos_bbsz_idx = torch.masked_select(
                     cand_bbsz_idx[:, :beam_size],
                     mask=eos_mask[:, :beam_size],
-                    out=eos_bbsz_idx,
+                    # out=eos_bbsz_idx,
                 )
                 if eos_bbsz_idx.numel() > 0:
-                    torch.masked_select(
+                    eos_scores = torch.masked_select(
                         cand_scores[:, :beam_size],
                         mask=eos_mask[:, :beam_size],
-                        out=eos_scores,
+                        # out=eos_scores,
                     )
                     num_remaining_sent -= finalize_hypos(
                         step, eos_bbsz_idx, eos_scores, cand_scores)
