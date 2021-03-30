@@ -15,7 +15,7 @@ def load_text_compression_dataset():
 
 def load_cnn_daily_mail():
     dataset = load_dataset("cnn_dailymail", "3.0.0")
-    print()
+    return dataset
 
 def load_arxiv():
     dataset = load_dataset("arxiv_dataset", data_dir="~/.manual_dir/arxiv")
@@ -64,6 +64,24 @@ def generate_arxiv_dataset(args):
     )
 
 
+def generate_cnn_dailymail_dataset(args):
+    dataset = load_cnn_daily_mail()
+
+    def generate(split):
+        for source, target in zip(split["article"], split["highlights"]):
+            yield source, target
+
+    dataset_path = os.path.join(args.output, "cnn_dailymail")
+    if not os.path.isdir(dataset_path):
+        os.mkdir(dataset_path)
+
+    write_splits(
+        dataset_path,
+        train=generate(dataset["train"]), val=generate(dataset["validation"]), test=generate(dataset["test"]),
+        src="original", tgt="summary", tokenizer=args.tokenizer
+    )
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -73,5 +91,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     generate_text_compression_dataset(args)
     generate_arxiv_dataset(args)
+    generate_cnn_dailymail_dataset(args)
     # load_cnn_daily_mail()
     # load_arxiv()
