@@ -1,7 +1,10 @@
 import logging
 import os
+import random
+from typing import Tuple, Iterable
 
-import torch
+from transformers import T5Tokenizer
+from tokenizer import Tokenizer
 
 from data import load_dictionaries
 from indexed_dataset import IndexedDatasetBuilder
@@ -18,8 +21,22 @@ def write_split(split, path, split_name, src, tgt):
                 tgtfile.write(f"{d}\n")
 
 
-
-def write_splits(path, train=None, val=None, test=None, src=None, tgt=None, tokenizer=None):
+def write_splits(
+        path: str, train: Iterable[Tuple[str, str]] = None, val: Iterable[Tuple[str, str]] = None,
+        test: Iterable[Tuple[str, str]] = None, src: str = None, tgt: str = None, tokenizer: str = None
+):
+    """
+    Write data splits and their binarization to disk
+    :param path: output_path
+    :param train: List of tuples for training. First element of tuple is the source text, and the second - target text.
+    :param val: List of tuples for validation. First element of tuple is the source text, and the second - target text.
+    :param test: List of tuples for testing. First element of tuple is the source text, and the second - target text.
+    :param src: Code for source
+    :param tgt: Code for target
+    :param tokenizer: String that represents tokenizer. Possible values: bpe|regular|t5-XXX. Need to specify model size
+        for t5 tokenizer.
+    :return: None
+    """
     assert src is not None and tgt is not None
     assert train is not None and val is not None and test is not None
 
@@ -27,21 +44,34 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None, toke
     write_split(val, path, "valid", src, tgt)
     write_split(test, path, "test", src, tgt)
 
-    from data import load_raw_text_dataset
-    from tokenizer import Tokenizer
-
     if tokenizer == "bpe":
         tok = create_subword_tokenizer("multi", 1000000)
+
         def tokenize(text):
             return [t for t in tok(text.replace("\n", " "))]
+
         logging.warning("Using bpe tokenizer")
-    else:
+    if tokenizer.startswith("t5"):
+        tok = T5Tokenizer.from_pretrained(tokenizer)
+
+        def tokenize(text):
+            """
+            This tokenization should be compatible with both <pad> and </s>
+            """
+            return [t for t in tok.tokenize(text.replace("\n", " "))]
+
+    elif tokenizer == "regular":
         from nltk import RegexpTokenizer
         tokenizer = RegexpTokenizer("[\w]+|[^\w\s]")
+
         # tokenize = tokenize_line
+
         def tokenize(text):
             return tokenizer.tokenize(text.replace("\n", " "))
+
         logging.warning("Using regular tokenizer")
+    else:
+        raise ValueError("Supported tokenizers are: bpe|regular|t5-XXX")
 
     def create_dictionary(direction):
         logging.warning("Only train set is used for generating the dictionary")
@@ -79,16 +109,92 @@ def write_splits(path, train=None, val=None, test=None, src=None, tgt=None, toke
     print(f"Target average length {len_tgt / len(tgt_dict)}")
 
 
+def generate_nmt_splits(
+        src_lang, tgt_lang, src_path, tgt_path, output_path,
+        max_sent_len=1000, test_val_size=0.1, train_size=0.8, maximum_sents=90000, tokenizer=None,
+        shuffle=True, random_seed=None
+):
+    """
 
+    :param src_lang: Source code
+    :param tgt_lang: Target code
+    :param src_path: File with source sentences
+    :param tgt_path: File with target sentences
+    :param output_path: path where data will be stored. For output filenames, see `write_splits`
+    :param max_sent_len: Maximum sentence length
+    :param test_val_size: Fraction of dataset used for testing and validation
+    :param train_size: Fraction of dataset used for training
+    :param maximum_sents: Maximum number of sentences to use
+    :param tokenizer: Tokenizer code, see `write_splits`
+    :param shuffle: Shuffle data before splitting
+    :param random_seed: Seed
+    :return:
+    """
 
+    assert train_size + test_val_size * 2 == 1
+
+    def read_lines(path):
+        with open(path, "r") as file:
+            return file.readlines()
+
+    src_lines = read_lines(src_path)
+    tgt_lines = read_lines(tgt_path)
+
+    assert len(src_lines) == len(tgt_lines)
+
+    filtered = [
+        (src, tgt) for ind, (src, tgt) in enumerate(zip(src_lines, tgt_lines)) if
+        src != tgt and (max_sent_len > len(src.strip()) != 0) and (max_sent_len > len(tgt.strip()) != 0)
+        and ind < maximum_sents
+    ]
+
+    if random_seed is not None:
+        random.seed(random_seed)
+
+    if shuffle:
+        random.shuffle(filtered)
+
+    total_sents = len(filtered)
+    bad_counter = len(tgt_lines) - total_sents
+
+    def generate_slice(sents, min_ind, max_ind):
+        for ind, src_tgt in enumerate(sents):
+            if min_ind <= ind < max_ind:
+                yield src_tgt
+
+    if not os.path.isdir(output_path):
+        os.mkdir(output_path)
+
+    write_splits(
+        output_path,
+        generate_slice(filtered, 0, int(total_sents * train_size)),
+        generate_slice(filtered, int(total_sents * train_size) + 1, int(total_sents * (train_size + test_val_size))),
+        generate_slice(filtered, int(total_sents * (train_size + test_val_size)), total_sents),
+        src_lang, tgt_lang, tokenizer
+    )
+
+    print("bad sentences:", bad_counter)
 
 
 if __name__ == "__main__":
-
     src_lang = 'cs'
     tgt_lang = 'en'
 
     file_dir = 'data-bin/'
+
+    # # TODO check out dataset binarization
+    # generate_nmt_splits(
+    #     src_lang,
+    #     tgt_lang,
+    #     src_path=file_dir + src_lang + '-' + tgt_lang + '/tokenized_full.' + src_lang,
+    #     tgt_path=file_dir + src_lang + '-' + tgt_lang + '/tokenized_full.' + tgt_lang,
+    #     output_path=file_dir + src_lang + '-' + tgt_lang,
+    #     max_sent_len=1000,
+    #     test_val_size=0.1,
+    #     train_size=0.8,
+    #     maximum_sents=90000,
+    #     tokenizer="t5-small"
+    # )
 
     src_file_n = open(file_dir + src_lang + '-' + tgt_lang + '/tokenized_full.' + src_lang, 'r')
     tgt_file_n = open(file_dir + src_lang + '-' + tgt_lang + '/tokenized_full.' + tgt_lang, 'r')
