@@ -2,12 +2,15 @@ import copy
 import math
 import os
 import warnings
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.distributions import Gumbel
 from torch.nn import CrossEntropyLoss
-from transformers import T5ForConditionalGeneration, T5PreTrainedModel
+from transformers import T5ForConditionalGeneration, T5PreTrainedModel, top_k_top_p_filtering
 
 from transformers.activations import ACT2FN
 from transformers.file_utils import (
@@ -32,9 +35,6 @@ from transformers.models.t5.configuration_t5 import T5Config
 
 logger = logging.get_logger(__name__)
 
-_CONFIG_FOR_DOC = "T5Config"
-_TOKENIZER_FOR_DOC = "T5Tokenizer"
-
 s__HEAD_MASK_WARNING_MSG = """
 The input argument `head_mask` was split into two arguments `head_mask` and `decoder_head_mask`. Currently,
 `decoder_head_mask` is set to copy `head_mask`, but this feature is deprecated and will be removed in future versions.
@@ -42,18 +42,10 @@ If you do not want to use any `decoder_head_mask` now, please set `decoder_head_
 num_heads)`.
 """
 
-####################################################
-# This dict contains ids and associated url
-# for the pretrained weights provided with the models
-####################################################
-T5_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "t5-small",
-    "t5-base",
-    "t5-large",
-    "t5-3b",
-    "t5-11b",
-    # See all T5 models at https://huggingface.co/models?filter=t5
-]
+
+@dataclass
+class AdversarialSeq2SeqLMOutput(Seq2SeqLMOutput):
+    output_onehot: Optional[Tuple[torch.FloatTensor]] = None
 
 
 class T5SequentialDecoder(T5Stack):
@@ -446,7 +438,7 @@ class T5SequentialDecoder(T5Stack):
 
 
 
-class GumbelT5(T5ForConditionalGeneration):
+class SeqT5(T5ForConditionalGeneration):
     # https://github.com/huggingface/transformers/blob/master/src/transformers/models/t5/modeling_t5.py#L1362
     def __init__(self, config):
         T5PreTrainedModel.__init__(self, config)
@@ -493,12 +485,25 @@ class GumbelT5(T5ForConditionalGeneration):
 
         return lm_logits
 
-    def free_gen_decode(
+    def create_gumbel_distribution(self):
+        gumbel_loc = 0.
+        gumbel_scale = 1.
+        logger.info(f"Creating Gumbel distribution with parameters loc={gumbel_loc}, scale={gumbel_scale}")
+        self.gumbel_dist = Gumbel(torch.tensor([gumbel_loc]), torch.tensor([gumbel_scale]))
+
+    def gumbel_decode(
             self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
             hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
-            output_hidden_states, return_dict
+            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1.
     ):
+        """
+        Decode with Gumbel softmax sampling with specified temperature
+        """
+        if not hasattr(self, "gumbel_dist"):
+            self.create_gumbel_distribution()
+
         decoder_inputs_embeds = None
+        output_onehot = None
         for tok_ind in range(decoder_input_ids.shape[1]):
             if tok_ind == 0:
                 one_hot_softmax = torch.zeros((decoder_input_ids.shape[0], self.decoder.embed_tokens.num_embeddings))
@@ -525,7 +530,91 @@ class GumbelT5(T5ForConditionalGeneration):
 
             lm_logits = self.compute_logits(decoder_outputs)
 
-            one_hot_softmax = nn.functional.gumbel_softmax(lm_logits[:, -1, :], hard=True)
+            last_token_logits = lm_logits[:, -1, :]
+            last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1)
+            last_token_logits = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+
+            one_hot_softmax = nn.functional.gumbel_softmax(
+                last_token_logits, tau=temperature, hard=True
+            )
+
+            if output_onehot is None:
+                output_onehot = one_hot_softmax.unsqueeze(1)
+            else:
+                output_onehot = torch.cat([output_onehot, one_hot_softmax.unsqueeze(1)], dim=1)
+
+        return decoder_outputs, lm_logits, output_onehot
+
+    def teacher_forcing_decode(
+            self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+            hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+            output_hidden_states, return_dict, top_k=0, top_p=1.
+    ):
+        decoder_outputs = self.decoder(
+            input_ids=decoder_input_ids,
+            attention_mask=decoder_attention_mask,
+            inputs_embeds=decoder_inputs_embeds,
+            past_key_values=past_key_values,
+            encoder_hidden_states=hidden_states,
+            encoder_attention_mask=attention_mask,
+            head_mask=decoder_head_mask,
+            encoder_head_mask=head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+
+        lm_logits = self.compute_logits(decoder_outputs)
+        # lm_logits = top_k_top_p_filtering(lm_logits.permute(0,2,1), top_k=top_k, top_p=top_p).permute(0,2,1)  # this is implemented in method generate
+
+        return decoder_outputs, lm_logits
+
+    def top_p_decode(
+            self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+            hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1.
+    ):
+        """
+        Decode with top p gradual sampling for RL objective
+        """
+        if not hasattr(self, "gumbel_dist"):
+            self.create_gumbel_distribution()
+
+        decoder_inputs_embeds = None
+        for tok_ind in range(decoder_input_ids.shape[1]):
+            if tok_ind == 0:
+                decoder_inputs_embeds = self.decoder.embed_tokens(torch.LongTensor([[0]]))
+            else:
+                decoder_inputs_embeds = torch.cat([
+                    decoder_inputs_embeds, self.decoder.embed_tokens(torch.LongTensor([[next_tokens]]))
+                ], dim=1)
+
+            decoder_outputs = self.decoder(
+                input_ids=None,  # decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_values=past_key_values,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=decoder_head_mask,
+                encoder_head_mask=head_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+
+            lm_logits = self.compute_logits(decoder_outputs)
+
+            last_token_logits = lm_logits[:, -1, :]
+            last_token_logits = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+
+            probs = nn.functional.softmax(
+                last_token_logits / temperature
+            )
+
+            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
 
         return decoder_outputs, lm_logits
 
@@ -546,7 +635,10 @@ class GumbelT5(T5ForConditionalGeneration):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        free_gen_decoding=False
+        decoding_style="tf",  # options: teacher forcing (tf), gumbel (gumbel), top p (rl)
+        temperature=1.,
+        top_k=0,
+        top_p=1.
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -630,41 +722,35 @@ class GumbelT5(T5ForConditionalGeneration):
                 decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
 
         # Decode
-        if free_gen_decoding:
-            decoder_outputs, lm_logits = self.free_gen_decode(
+
+        decode_args =  (
                 decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
                 hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
                 output_hidden_states, return_dict
             )
-        else:
-            decoder_outputs = self.decoder(
-                input_ids=decoder_input_ids,
-                attention_mask=decoder_attention_mask,
-                inputs_embeds=decoder_inputs_embeds,
-                past_key_values=past_key_values,
-                encoder_hidden_states=hidden_states,
-                encoder_attention_mask=attention_mask,
-                head_mask=decoder_head_mask,
-                encoder_head_mask=head_mask,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
 
-            lm_logits = self.compute_logits(decoder_outputs)
+        if decoding_style == "tf":
+            decoder_outputs, lm_logits = self.teacher_forcing_decode(*decode_args, top_k=top_k, top_p=top_p)
+            output_onehot = None
+        elif decoding_style == "gumbel":
+            decoder_outputs, lm_logits, output_onehot = self.gumbel_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p)
+        elif decoding_style == "rl":
+            decoder_outputs, lm_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p)
+            output_onehot = None
+        else:
+            raise ValueError(f"`decoding_style` is {decoding_style} but supported values are: tf|gumbel|rl")
 
         loss = None
         if labels is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-100)
-            loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            loss = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))  # TODO need to set temperature here?
             # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
 
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
             return ((loss,) + output) if loss is not None else output
 
-        return Seq2SeqLMOutput(
+        return AdversarialSeq2SeqLMOutput(
             loss=loss,
             logits=lm_logits,
             past_key_values=decoder_outputs.past_key_values,
@@ -674,28 +760,26 @@ class GumbelT5(T5ForConditionalGeneration):
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
+            output_onehot=output_onehot
         )
 
 
 def test_T5():
-    from transformers import T5Tokenizer, T5ForConditionalGeneration
+    from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 
     tokenizer = T5Tokenizer.from_pretrained('t5-small')
-    model = T5.from_pretrained('t5-small')
-    model_original = T5ForConditionalGeneration.from_pretrained('t5-small')
+    model = SeqT5.from_pretrained('t5-small')
 
     input_ids = tokenizer('translate English to German: The house is wonderful.', return_tensors='pt').input_ids
     labels = tokenizer('Das Haus ist wunderbar.', return_tensors='pt').input_ids
-    outputs = model(input_ids=input_ids, labels=labels, free_gen_decoding=True)
-    outputs_original = model_original(input_ids=input_ids, labels=labels)
-    loss = outputs.loss
-    logits = outputs.logits
+    outputs_tf = model(input_ids=input_ids, labels=labels, decoding_style="tf")
+    outputs_gumbel = model(input_ids=input_ids, labels=labels, decoding_style="gumbel", top_k=1)
+    outputs_rl = model(input_ids=input_ids, labels=labels, decoding_style="rl", top_k=1)
 
     input_ids = tokenizer("summarize: studies have shown that owning a dog is good for you, but cats lead to heart attack ",
                                return_tensors="pt").input_ids  # Batch size 1
-    outputs = model.generate(input_ids)
-    outputs_original = model_original.generate(input_ids)
-
+    outputs = model.generate(input_ids, temperature=1., top_p=0.9, do_sample=True, max_length=100, repetition_penalty=1.)
+    # references for repetition penalty https://huggingface.co/blog/how-to-generate
     print()
 
 
