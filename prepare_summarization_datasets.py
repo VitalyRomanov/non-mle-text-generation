@@ -13,13 +13,16 @@ def load_text_compression_dataset():
     dataset = load_dataset("msr_text_compression", data_dir="~/.manual_dir/msr_text_compression")
     return dataset
 
+
 def load_cnn_daily_mail():
     dataset = load_dataset("cnn_dailymail", "3.0.0")
     return dataset
 
+
 def load_arxiv():
     dataset = load_dataset("arxiv_dataset", data_dir="~/.manual_dir/arxiv")
     return dataset
+
 
 def generate_text_compression_dataset(args):
     dataset = load_text_compression_dataset()
@@ -40,6 +43,7 @@ def generate_text_compression_dataset(args):
         train=generate(dataset["train"]), val=generate(dataset["validation"]), test=generate(dataset["test"]),
         src="original", tgt="summary", tokenizer=args.tokenizer
     )
+
 
 def generate_arxiv_dataset(args):
     dataset = load_arxiv()
@@ -85,12 +89,16 @@ def generate_cnn_dailymail_dataset(args):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tokenizer", default="regular", help="regular|bpe")
+    parser.add_argument("--tokenizer", default="regular", help="regular|bpe|t5-small")
     parser.add_argument("--output", default="data-bin")
 
     args = parser.parse_args()
+
+    output_dir = os.path.join(args.output, args.tokenizer)
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+    args.output = output_dir
+
     generate_text_compression_dataset(args)
     generate_arxiv_dataset(args)
     generate_cnn_dailymail_dataset(args)
-    # load_cnn_daily_mail()
-    # load_arxiv()
