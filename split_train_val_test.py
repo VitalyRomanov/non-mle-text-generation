@@ -4,6 +4,8 @@ import random
 from typing import Tuple, Iterable
 
 from transformers import T5Tokenizer
+
+import dictionary
 from tokenizer import Tokenizer
 
 from data import load_dictionaries
@@ -73,10 +75,38 @@ def write_splits(
     else:
         raise ValueError("Supported tokenizers are: bpe|regular|t5-XXX")
 
-    def create_dictionary(direction):
-        logging.warning("Only train set is used for generating the dictionary")
-        dict_ = Tokenizer.build_dictionary(os.path.join(path, f"train.{direction}"), tokenize=tokenize)
-        dict_.save(os.path.join(path, f"dict.{direction}.txt"))
+    if not tokenizer.startswith("t5"):
+        def create_dictionary(direction):
+            logging.warning("Only train set is used for generating the dictionary")
+            dict_ = Tokenizer.build_dictionary(os.path.join(path, f"train.{direction}"), tokenize=tokenize)
+            dict_.save(os.path.join(path, f"dict.{direction}.txt"))
+    else:
+        def create_dictionary(direction):
+            dict_ = dictionary.Dictionary()
+            t5_vocab = [[tok.sp_model.id_to_piece(id), id] for id in range(tok.sp_model.get_piece_size())]
+            assert t5_vocab.pop(0)[0] == "<pad>"
+            assert t5_vocab.pop(0)[0] == "</s>"
+            assert t5_vocab.pop(0)[0] == "<unk>"
+            for word, id in t5_vocab:
+                dict_.add_symbol(word)
+            for word, id in sorted(
+                    zip(tok.additional_special_tokens, tok.additional_special_tokens_ids), key=lambda x: x[1]
+            ):
+                dict_.add_symbol(word)
+
+            t5_vocab_dict = dict(((w, id) for w, id in t5_vocab))
+            t5_vocab_dict.update(
+                zip(tok.additional_special_tokens, tok.additional_special_tokens_ids)
+            )
+
+
+            for word, id in dict_.indices.items():
+                if word in {"<Lua heritage>", "<pad>", "</s>", "<unk>"}:
+                    continue
+                assert id == t5_vocab_dict[word] + 1
+
+            dict_.finalize()
+            dict_.save(os.path.join(path, f"dict.{direction}.txt"))
 
     create_dictionary(src)
     create_dictionary(tgt)
