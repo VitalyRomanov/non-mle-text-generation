@@ -578,16 +578,14 @@ class SeqT5(T5ForConditionalGeneration):
         """
         Decode with top p gradual sampling for RL objective
         """
-        if not hasattr(self, "gumbel_dist"):
-            self.create_gumbel_distribution()
-
         decoder_inputs_embeds = None
-        for tok_ind in range(decoder_input_ids.shape[1]):
+        batch_size, seq_len = decoder_input_ids.shape[:2]
+        for tok_ind in range(seq_len):
             if tok_ind == 0:
-                decoder_inputs_embeds = self.decoder.embed_tokens(torch.LongTensor([[0]]))
+                decoder_inputs_embeds = self.decoder.embed_tokens(torch.LongTensor([[0]]).repeat(batch_size, 1))
             else:
                 decoder_inputs_embeds = torch.cat([
-                    decoder_inputs_embeds, self.decoder.embed_tokens(torch.LongTensor([[next_tokens]]))
+                    decoder_inputs_embeds, self.decoder.embed_tokens(next_tokens)
                 ], dim=1)
 
             decoder_outputs = self.decoder(
@@ -607,14 +605,14 @@ class SeqT5(T5ForConditionalGeneration):
 
             lm_logits = self.compute_logits(decoder_outputs)
 
-            last_token_logits = lm_logits[:, -1, :]
+            last_token_logits = lm_logits[:, -1, :] / temperature
             last_token_logits = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
 
             probs = nn.functional.softmax(
-                last_token_logits / temperature
+                last_token_logits, dim=1
             )
 
-            next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
 
         return decoder_outputs, lm_logits
 
