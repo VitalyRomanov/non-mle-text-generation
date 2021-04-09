@@ -50,6 +50,9 @@ class ModelTrainer:
         self.create_optimizers(args)
         self.summary_writer = SummaryWriter(self.checkpoints_path)
 
+        import datasets
+        self.bleu_metric = datasets.load_metric('sacrebleu')
+
     def set_gpu(self, args):
         # args.gpuid = ""  # TODO disable cuda
         if args.gpuid[0] == -1:
@@ -96,6 +99,7 @@ class ModelTrainer:
         d_logging_meters['valid_loss'] = AverageMeter()
         d_logging_meters['train_acc'] = AverageMeter()
         d_logging_meters['valid_acc'] = AverageMeter()
+        d_logging_meters['bleu'] = AverageMeter()
         d_logging_meters['bsz'] = AverageMeter()  # sentences per batch
 
         self.g_logging_meters = g_logging_meters
@@ -138,7 +142,7 @@ class ModelTrainer:
             name = self.__class__.__name__ + " " + str(datetime.now())
         else:
             name = self.__class__.__name__ + " " + args.note
-        path = os.path.join(args.model_file, name.replace(" ","_"))
+        path = os.path.join(args.model_file, name.replace(" ","_").replace(":","-"))
         if not os.path.exists(path):
             os.makedirs(path)
         self.checkpoints_path = path
@@ -205,12 +209,14 @@ class ModelTrainer:
 
         self.write_summary({"pg_train_loss": logging_loss}, batch_i + (epoch-1) * loader_len)
 
-    def mle_generator_loss(self, sample):
+    def mle_generator_loss(self, sample, return_logits=False):
         sys_out_batch = self.generator(sample)
         out_batch = sys_out_batch.contiguous().view(-1, sys_out_batch.size(-1))  # (64 X 50) X 6632
         trg_batch = sample['target'].view(-1)  # 64*50 = 3200
 
         loss = self.g_criterion(out_batch, trg_batch)
+        if return_logits:
+            return loss, sys_out_batch
         return loss
 
     def mle_step(self, sample, batch_i, epoch, loader_len):
@@ -309,6 +315,60 @@ class ModelTrainer:
 
         return num_update
 
+    def decode_sentences(self, batch, for_referece=False):
+        sentences = []
+        for sentence in batch:
+            decoded = self.dataset.dst_dict.string(sentence)
+            if "▁" in decoded:
+                decoded = decoded.replace(" ", "").replace("▁", " ")
+            if for_referece:
+                decoded = [decoded]
+            sentences.append(decoded)
+        return sentences
+
+    def compute_bleu(self, predictions, references):
+        bleu = self.bleu_metric.compute(
+            predictions=self.decode_sentences(predictions),
+            references=self.decode_sentences(references, for_referece=True)
+        )
+        return bleu["score"]
+
+    def token_accuracy(self, predictions, targets):
+        token_labels = targets.reshape(-1, )
+        gen_acc = torch.sum(predictions.reshape(-1, ) == token_labels).float() / len(token_labels)
+        return gen_acc
+
+    def evaluate_generator(self, predictions, targets, loss, ntokens, batch_i, epoch_i, num_batches):
+        sample_size = targets.size(0) if self.args.sentence_avg else ntokens
+
+        loss = loss.data / sample_size / math.log(2)
+        gen_acc = self.token_accuracy(predictions, targets)
+        bleu = self.compute_bleu(predictions, targets)
+
+        self.g_logging_meters['valid_loss'].update(loss, sample_size)
+        self.g_logging_meters['valid_acc'].update(gen_acc)
+        self.d_logging_meters['bleu'].update(bleu)
+
+        logging.debug(f"G dev loss {self.g_logging_meters['valid_loss'].avg:.3f}, "
+                      f"G dev acc {self.g_logging_meters['valid_acc'].avg:.3f}, "
+                      f"bleu {self.d_logging_meters['bleu'].avg:.3f} at batch {batch_i}")
+        self.write_summary({
+            "mle_valid_loss": loss,
+            "valid_acc": gen_acc,
+            "bleu": bleu
+        }, batch_i + (epoch_i - 1) * num_batches)
+
+    def evaluate_discriminator(self, d_loss, d_acc, batch_i, epoch_i, num_batches):
+        self.d_logging_meters['valid_acc'].update(d_acc)
+        self.d_logging_meters['valid_loss'].update(d_loss)
+
+        logging.debug(f"D dev loss {self.d_logging_meters['valid_loss'].avg:.3f}, "
+                      f"acc {self.d_logging_meters['valid_acc'].avg:.3f} at batch {batch_i}")
+        self.write_summary({
+            "desc_val_loss": d_loss,
+            "desc_val_acc": d_acc,
+        }, batch_i + (epoch_i - 1) * num_batches)
+
     def eval_loop(self, valloader, epoch_i):
         for i, sample in enumerate(valloader):
 
@@ -318,22 +378,17 @@ class ModelTrainer:
                     sample = utils.make_variable(sample, cuda=cuda)
 
                 # generator validation
-                loss = self.mle_generator_loss(sample)
-                sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-                loss = loss.data / sample_size / math.log(2)
-
-                self.g_logging_meters['valid_loss'].update(loss, sample_size)
-                logging.debug(f"G dev loss at batch {i}: {self.g_logging_meters['valid_loss'].avg:.3f}")
-                self.write_summary({"mle_valid_loss": loss},
-                                   i + (epoch_i - 1) * len(valloader))
+                loss, logits = self.mle_generator_loss(sample, return_logits=True)
+                predictions = logits.argmax(-1)
+                self.evaluate_generator(
+                    predictions, sample["target"], loss, ntokens=sample["ntokens"],
+                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader)
+                )
 
                 # discriminator validation
                 d_loss, acc = self.discrimnator_loss_acc(sample)
-                self.d_logging_meters['valid_acc'].update(acc)
-                self.d_logging_meters['valid_loss'].update(d_loss)
-                logging.debug(f"D dev loss {self.d_logging_meters['valid_loss'].avg:.3f}, acc {self.d_logging_meters['valid_acc'].avg:.3f} at batch {i}")
-                self.write_summary({"desc_val_loss": d_loss, "desc_val_acc": acc},
-                                   i + (epoch_i - 1) * len(valloader))
+                self.evaluate_discriminator(d_loss, acc, batch_i=i, epoch_i=epoch_i, num_batches=len(valloader))
+
 
     def train(self):
         args = self.args
