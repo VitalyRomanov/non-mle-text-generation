@@ -31,7 +31,7 @@ def generate_text_compression_dataset(args):
         for sample in split:
             source = sample["source_text"]
             for target in sample["targets"]["compressed_text"]:
-                yield source, target
+                yield args.prefix + source, target
                 break
 
     dataset_path = os.path.join(args.output, "text_compression")
@@ -52,7 +52,7 @@ def generate_arxiv_dataset(args):
         for source, target in zip(split["abstract"], split["title"]):
             # source = sample["abstract"]
             # target = sample["title"]
-            yield source, target
+            yield args.prefix + source, target
 
     dataset_path = os.path.join(args.output, "arxiv")
     if not os.path.isdir(dataset_path):
@@ -73,7 +73,7 @@ def generate_cnn_dailymail_dataset(args):
 
     def generate(split):
         for source, target in zip(split["article"], split["highlights"]):
-            yield source, target
+            yield args.prefix + source, target
 
     dataset_path = os.path.join(args.output, "cnn_dailymail")
     if not os.path.isdir(dataset_path):
@@ -91,6 +91,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokenizer", default="regular", help="regular|bpe|t5-small")
     parser.add_argument("--output", default="data-bin")
+    parser.add_argument("--prefix", default="")
 
     args = parser.parse_args()
 
