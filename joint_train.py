@@ -9,6 +9,7 @@ import options
 import utils
 
 from ModelTrainer import ModelTrainer
+from SeqT5Trainer import SeqT5Trainer
 from discriminator import AttDiscriminator
 from generator import VarLSTMModel, LSTMModel
 
@@ -98,14 +99,12 @@ class LstmMleTrainer(ModelTrainer):
                     sample = utils.make_variable(sample, cuda=cuda)
 
                 # generator validation
-                loss = self.mle_generator_loss(sample)
-                sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-                loss = loss.data / sample_size / math.log(2)
-
-                self.g_logging_meters['valid_loss'].update(loss, sample_size)
-                logging.debug(f"G dev loss at batch {i}: {self.g_logging_meters['valid_loss'].avg:.3f}")
-                self.write_summary({"mle_valid_loss": loss},
-                                   i + (epoch_i - 1) * len(valloader))
+                loss, logits = self.mle_generator_loss(sample, return_logits=True)
+                predictions = logits.argmax(-1)
+                self.evaluate_generator(
+                    predictions, sample["target"], loss, ntokens=sample["ntokens"],
+                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader)
+                )
 
 
 class VarLSTMTrainer(LstmMleTrainer):
@@ -150,4 +149,6 @@ if __name__ == "__main__":
         trainer = VarLSTMTrainer(options)
     elif model_name == "mle":
         trainer = LstmMleTrainer(options)
+    elif model_name == "t5":
+        trainer = SeqT5Trainer(options)
     trainer.train()
