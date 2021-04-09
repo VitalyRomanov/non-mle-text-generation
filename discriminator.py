@@ -29,7 +29,7 @@ class AttDiscriminator(nn.Module):
 
     def forward(self, src_sentence, trg_sentence):
         src_out = self.embed_src_tokens(src_sentence)
-        trg_out = self.embed_src_tokens(trg_sentence)
+        trg_out = self.embed_trg_tokens(trg_sentence)
 
         src_mask = src_sentence == self.src_pad_idx
         trg_mask = trg_sentence == self.pad_idx
