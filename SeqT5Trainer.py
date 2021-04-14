@@ -90,13 +90,18 @@ class SeqT5Trainer(ModelTrainer):
     def transform_from_t5(self, tensor):
         return tensor + 1
 
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.9, temp=1.):
+        return self.generator(
+            self.transform_for_t5(sample['net_input']['src_tokens']),
+            labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
+            temperature=temp
+        )
+
     def pg_step(self, sample, batch_i, epoch, loader_len):
         print("Policy Gradient Training")
 
-        t5out = self.generator(
-            self.transform_for_t5(sample['net_input']['src_tokens']),
-            labels=self.transform_for_t5(sample['target']), decoding_style="rl", top_p=0.9
-        )
+        t5out = self.sequential_generation(sample)
+
         sys_out_batch = t5out.logits
         prediction = sys_out_batch.argmax(dim=-1)
         prediction = self.transform_from_t5(prediction)
@@ -241,7 +246,10 @@ class SeqT5Trainer(ModelTrainer):
                     sample = utils.make_variable(sample, cuda=cuda)
 
                 # generator validation
-                loss, logits = self.mle_generator_loss(sample, return_logits=True)
+                t5out = self.sequential_generation(sample, top_k=1, temp=.5)
+                logits = t5out.logits
+                loss = t5out.loss
+                # loss, logits = self.mle_generator_loss(sample, return_logits=True)
                 predictions = self.transform_from_t5(logits.argmax(-1))
                 self.evaluate_generator(
                     predictions, sample["target"], loss, ntokens=sample["ntokens"],
@@ -330,3 +338,56 @@ class SeqT5Trainer(ModelTrainer):
             if self.g_logging_meters['valid_loss'].avg < best_dev_loss:
                 best_dev_loss = self.g_logging_meters['valid_loss'].avg
                 self.save_generator(os.path.join(self.checkpoints_path, "best_gmodel.pt"))
+
+    def save_generator(self, path):
+        self.generator.save_pretrained(path)
+
+
+class SeqT5Mle(SeqT5Trainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def train_loop(self, trainloader, epoch_i, num_update):
+        for i, sample in enumerate(trainloader):
+            break
+
+            if self.use_cuda:
+                # wrap input tensors in cuda tensors
+                sample = utils.make_variable(sample, cuda=cuda)
+
+            self.mle_step(sample, i, epoch_i, len(trainloader))
+            num_update += 1
+
+            self.discriminator_step(sample, i, epoch_i, len(trainloader))
+
+        return num_update
+
+
+class SeqT5RL(SeqT5Trainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def train_loop(self, trainloader, epoch_i, num_update):
+        for i, sample in enumerate(trainloader):
+
+            if self.use_cuda:
+                sample = utils.make_variable(sample, cuda=cuda)
+
+            self.pg_step(sample, i, epoch_i, len(trainloader))
+            num_update += 1
+
+            self.discriminator_step(sample, i, epoch_i, len(trainloader))
+
+        return num_update
+
+
+class SeqT5Gumbel(SeqT5RL):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def sequential_generation(self, sample, decoding_style="gumbel", top_k=0, top_p=0.9, temp=1.):
+        return self.generator(
+            self.transform_for_t5(sample['net_input']['src_tokens']),
+            labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
+            temperature=temp
+        )

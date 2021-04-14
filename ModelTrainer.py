@@ -478,7 +478,7 @@ class ModelTrainer:
 
     def save_models(self, epoch_i):
         self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}.pt"))
-        self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_discr.pt"))
+        self.save_discriminator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_discr.pt"))
         with open(os.path.join(self.checkpoints_path, "params.json"), "w") as paramsink:
             paramsink.write(json.dumps(self.args.__dict__, indent=4))
 

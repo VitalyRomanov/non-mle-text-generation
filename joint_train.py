@@ -9,7 +9,7 @@ import options
 import utils
 
 from ModelTrainer import ModelTrainer
-from SeqT5Trainer import SeqT5Trainer
+from SeqT5Trainer import SeqT5Trainer, SeqT5Mle, SeqT5RL, SeqT5Gumbel
 from discriminator import AttDiscriminator
 from generator import VarLSTMModel, LSTMModel
 
@@ -149,6 +149,12 @@ if __name__ == "__main__":
         trainer = VarLSTMTrainer(options)
     elif model_name == "mle":
         trainer = LstmMleTrainer(options)
-    elif model_name == "t5":
-        trainer = SeqT5Trainer(options)
+    elif model_name == "t5mle":
+        trainer = SeqT5Mle(options)
+    elif model_name == "t5rl":
+        trainer = SeqT5RL(options)
+    elif model_name == "t5gumbel":
+        trainer = SeqT5Gumbel(options)
+    else:
+        raise ValueError("Choose appropriate model")
     trainer.train()
