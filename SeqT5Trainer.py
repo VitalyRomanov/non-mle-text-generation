@@ -367,6 +367,7 @@ class SeqT5RL(SeqT5Trainer):
         super().__init__(*args, **kwargs)
 
     def train_loop(self, trainloader, epoch_i, num_update):
+        print(f"Num batches: {len(trainloader)}")
         for i, sample in enumerate(trainloader):
 
             if self.use_cuda:
