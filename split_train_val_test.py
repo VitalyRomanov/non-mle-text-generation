@@ -232,14 +232,14 @@ def generate_nmt_splits2(
 
 
 if __name__ == "__main__":
-    src_lang = 'cs'
-    tgt_lang = 'en'
+    src_lang = 'en'
+    tgt_lang = 'ro'
 
     file_dir = 'data-bin/'
 
     generate_nmt_splits2(
-        src_lang="en",
-        tgt_lang="ro",
+        src_lang=src_lang,
+        tgt_lang=tgt_lang,
         dataset_path="wmt16_en-ro",
         output_path=file_dir + src_lang + '-' + tgt_lang,
         tokenizer="t5-small",

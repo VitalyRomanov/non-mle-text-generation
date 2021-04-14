@@ -7,8 +7,9 @@ class AttDiscriminator(nn.Module):
     def __init__(self, args, src_dict, dst_dict, use_cuda=True, dropout=0.1, num_heads=1):
         super(AttDiscriminator, self).__init__()
 
-        self.src_dict_size = len(src_dict)
-        self.trg_dict_size = len(dst_dict)
+        # TODO resolve the problem
+        self.src_dict_size = 200000 #len(src_dict)
+        self.trg_dict_size = 200000 #len(dst_dict)
 
         self.src_pad_idx = src_dict.pad()
         self.pad_idx = dst_dict.pad()
@@ -20,8 +21,8 @@ class AttDiscriminator(nn.Module):
         emb_dim = args.decoder_out_embed_dim
 
         # TODO share this across encoder and decoder
-        self.embed_src_tokens = Embedding(len(src_dict), emb_dim, src_dict.pad())
-        self.embed_trg_tokens = Embedding(len(dst_dict), emb_dim, dst_dict.pad())
+        self.embed_src_tokens = Embedding(self.src_dict_size, emb_dim, src_dict.pad())
+        self.embed_trg_tokens = Embedding(self.trg_dict_size, emb_dim, dst_dict.pad())
 
         self.attention = nn.MultiheadAttention(emb_dim, num_heads=num_heads, dropout=dropout)
         self.input_proj = Linear(emb_dim * num_heads, 1, bias=False)

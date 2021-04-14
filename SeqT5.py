@@ -582,7 +582,7 @@ class SeqT5(T5ForConditionalGeneration):
         batch_size, seq_len = decoder_input_ids.shape[:2]
         for tok_ind in range(seq_len):
             if tok_ind == 0:
-                decoder_inputs_embeds = self.decoder.embed_tokens(torch.LongTensor([[0]]).repeat(batch_size, 1)).to(decoder_inputs_embeds.device)
+                decoder_inputs_embeds = self.decoder.embed_tokens(torch.LongTensor([[0]]).repeat(batch_size, 1).to(decoder_input_ids.device))
             else:
                 decoder_inputs_embeds = torch.cat([
                     decoder_inputs_embeds, self.decoder.embed_tokens(next_tokens)
