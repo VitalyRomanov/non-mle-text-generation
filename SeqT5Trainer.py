@@ -349,7 +349,6 @@ class SeqT5Mle(SeqT5Trainer):
 
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
-            break
 
             if self.use_cuda:
                 # wrap input tensors in cuda tensors
