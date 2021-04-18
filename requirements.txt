@@ -4,3 +4,4 @@ dill
 datasets
 transformers
 sacrebleu
+tensorboard
