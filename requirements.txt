@@ -1,3 +1,6 @@
 torch
 numpy
 dill
+datasets
+transformers
+sacrebleu
