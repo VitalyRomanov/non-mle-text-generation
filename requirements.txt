@@ -5,3 +5,4 @@ datasets
 transformers
 sacrebleu
 tensorboard
+sentencepiece
