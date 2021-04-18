@@ -99,7 +99,8 @@ class ModelTrainer:
         d_logging_meters['valid_loss'] = AverageMeter()
         d_logging_meters['train_acc'] = AverageMeter()
         d_logging_meters['valid_acc'] = AverageMeter()
-        d_logging_meters['bleu'] = AverageMeter()
+        d_logging_meters['train_bleu'] = AverageMeter()
+        d_logging_meters['valid_bleu'] = AverageMeter()
         d_logging_meters['bsz'] = AverageMeter()  # sentences per batch
 
         self.g_logging_meters = g_logging_meters
@@ -149,9 +150,13 @@ class ModelTrainer:
 
     def create_losses(self):
         # define loss function
-        self.g_criterion = torch.nn.NLLLoss(ignore_index=self.dataset.dst_dict.pad(), reduction='sum')
+        self._g_criterion = torch.nn.NLLLoss(reduction='mean')
         self.d_criterion = torch.nn.BCELoss()
-        self.pg_criterion = PGLoss(ignore_index=self.dataset.dst_dict.pad(), size_average=True, reduce=True)
+        self._pg_criterion = PGLoss(ignore_index=self.dataset.dst_dict.pad(), size_average=True, reduce=True)
+        self._logsoftmax = torch.nn.LogSoftmax(dim=-1)
+
+        self.g_criterion = lambda pred, true: self._g_criterion(self._logsoftmax(pred), true)
+        self.pg_criterion = lambda pred, true, reward, use_cuda: self._pg_criterion(self._logsoftmax(pred), true, reward, use_cuda)
 
     def handicap_discriminator(self):
         # fix discriminator word embedding (as Wu et al. do)
@@ -185,29 +190,24 @@ class ModelTrainer:
         print("Policy Gradient Training")
 
         sys_out_batch = self.generator(sample)  # 64 X 50 X 6632
-        out_batch = sys_out_batch.contiguous().view(-1, sys_out_batch.size(-1))  # (64 * 50) X 6632
-
-        _, prediction = out_batch.topk(1)
-        prediction = prediction.squeeze(1)  # 64*50 = 3200
-        prediction = torch.reshape(prediction, sample['net_input']['src_tokens'].shape)  # 64 X 50
+        prediction = sys_out_batch.argmax(-1)
 
         with torch.no_grad():
-            reward = self.discriminator(sample['net_input']['src_tokens'], prediction)  # 64 X 1
+            reward = self.discriminator(sample['net_input']['src_tokens'], prediction)
 
-        train_trg_batch = sample['target']  # 64 x 50
+        pg_loss = self.pg_criterion(sys_out_batch, sample['target'], reward, self.use_cuda)
 
-        pg_loss = self.pg_criterion(sys_out_batch, train_trg_batch, reward, self.use_cuda)
-        sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']  # 64
-        logging_loss = pg_loss / math.log(2)
-        self.g_logging_meters['train_loss'].update(logging_loss.item(), sample_size)
-        logging.debug(
-            f"G policy gradient loss at batch {batch_i}: {pg_loss.item():.3f}, lr={self.g_optimizer.param_groups[0]['lr']}")
+        with torch.no_grad():
+            if (epoch * loader_len + batch_i) % 1 == 0:
+                self.evaluate_generator(
+                    prediction, sample['target'], pg_loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
+                )
+
         self.g_optimizer.zero_grad()
         pg_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
-
-        self.write_summary({"pg_train_loss": logging_loss}, batch_i + (epoch-1) * loader_len)
 
     def mle_generator_loss(self, sample, return_logits=False):
         sys_out_batch = self.generator(sample)
@@ -223,25 +223,26 @@ class ModelTrainer:
         # MLE training
         print("MLE Training")
 
-        loss = self.mle_generator_loss(sample)
-        sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-        logging_loss = loss.data / sample_size / math.log(2)
+        loss, logits = self.mle_generator_loss(sample, return_logits=True)
+        predictions = logits.argmax(-1)
 
-        nsentences = sample['target'].size(0)
-        self.g_logging_meters['bsz'].update(nsentences)
-        self.g_logging_meters['train_loss'].update(logging_loss, sample_size)
-        logging.debug(
-            f"G MLE loss at batch {batch_i}: {self.g_logging_meters['train_loss'].avg:.3f}, lr={self.g_optimizer.param_groups[0]['lr']}")
+        # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
+
+        with torch.no_grad():
+            if (epoch * loader_len + batch_i) % 1 == 0:
+                self.evaluate_generator(
+                    predictions, sample['target'], loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
+                )
+
         self.g_optimizer.zero_grad()
         loss.backward()
         # all-reduce grads and rescale by grad_denom
-        for p in self.generator.parameters():
-            if p.requires_grad:
-                p.grad.data.div_(sample_size)
+        # for p in self.generator.parameters():
+        #     if p.requires_grad:
+        #         p.grad.data.div_(sample_size)
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
-
-        self.write_summary({"mle_train_loss": logging_loss}, batch_i + (epoch - 1) * loader_len)
 
     def discrimnator_loss_acc(self, sample):
         bsz = sample['target'].size(0)  # batch_size = 64
@@ -249,7 +250,8 @@ class ModelTrainer:
 
         # now train with machine translation output i.e generator output
         true_sentence = sample['target']  # 64*50 = 3200
-        true_labels = Variable(torch.ones(sample['target'].size(0)).float())  # 64 length vector
+        # true_labels = Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
+        true_labels = Variable(torch.ones(sample['target'].size(0)).float())
 
         if self.use_cuda:
             true_sentence = true_sentence.cuda()
@@ -258,14 +260,10 @@ class ModelTrainer:
         with torch.no_grad():
             sys_out_batch = self.generator(sample)  # 64 X 50 X 6632
 
-        out_batch = sys_out_batch.contiguous().view(-1, sys_out_batch.size(-1))  # (64 X 50) X 6632
+        fake_sentence = sys_out_batch.argmax(-1)
 
-        _, prediction = out_batch.topk(1)
-        prediction = prediction.squeeze(1)  # 64 * 50 = 6632
-
-        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())  # 64 length vector
-
-        fake_sentence = torch.reshape(prediction, src_sentence.shape)  # 64 X 50
+        # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
+        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
 
         if self.use_cuda:
             fake_labels = fake_labels.cuda()
@@ -283,15 +281,15 @@ class ModelTrainer:
     def discriminator_step(self, sample, batch_i, epoch, loader_len):
         d_loss, acc = self.discrimnator_loss_acc(sample)
 
-        self.d_logging_meters['train_acc'].update(acc)
-        self.d_logging_meters['train_loss'].update(d_loss)
-        logging.debug(
-            f"D training loss {self.d_logging_meters['train_loss'].avg:.3f}, acc {self.d_logging_meters['train_acc'].avg:.3f} at batch {batch_i}")
+        with torch.no_grad():
+            if (epoch * loader_len + batch_i) % 1 == 0:
+                self.evaluate_discriminator(
+                    d_loss, acc, batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train"
+                )
+
         self.d_optimizer.zero_grad()
         d_loss.backward()
         self.d_optimizer.step()
-
-        self.write_summary({"desc_train_loss": d_loss, "desc_train_acc": acc}, batch_i + (epoch - 1) * loader_len)
 
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
@@ -338,35 +336,45 @@ class ModelTrainer:
         gen_acc = torch.sum(predictions.reshape(-1, ) == token_labels).float() / len(token_labels)
         return gen_acc
 
-    def evaluate_generator(self, predictions, targets, loss, ntokens, batch_i, epoch_i, num_batches):
+    def evaluate_generator(
+            self, predictions, targets, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
+            strategy=None
+    ):
+
+        assert partition in {"train", "valid", "test"}
+        assert strategy in {"mle", "rl", "gumbel"}
+
         sample_size = targets.size(0) if self.args.sentence_avg else ntokens
 
         loss = loss.data / sample_size / math.log(2)
         gen_acc = self.token_accuracy(predictions, targets)
         bleu = self.compute_bleu(predictions, targets)
 
-        self.g_logging_meters['valid_loss'].update(loss, sample_size)
-        self.g_logging_meters['valid_acc'].update(gen_acc)
-        self.d_logging_meters['bleu'].update(bleu)
+        self.g_logging_meters[f'{partition}_loss'].update(loss, sample_size)
+        self.g_logging_meters[f'{partition}_acc'].update(gen_acc)
+        self.d_logging_meters[f'{partition}_bleu'].update(bleu)
 
-        logging.debug(f"G dev loss {self.g_logging_meters['valid_loss'].avg:.3f}, "
-                      f"G dev acc {self.g_logging_meters['valid_acc'].avg:.3f}, "
-                      f"bleu {self.d_logging_meters['bleu'].avg:.3f} at batch {batch_i}")
+        logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
+                      f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f}, "
+                      f"bleu {self.d_logging_meters[f'{partition}_bleu'].avg:.3f} at batch {batch_i}")
         self.write_summary({
-            "mle_valid_loss": loss,
-            "valid_acc": gen_acc,
-            "bleu": bleu
+            f"Loss/{partition}/{strategy}/gen": loss,
+            f"Accuracy/{partition}/gen": gen_acc,
+            f"bleu/{partition}/gen": bleu
         }, batch_i + (epoch_i - 1) * num_batches)
 
-    def evaluate_discriminator(self, d_loss, d_acc, batch_i, epoch_i, num_batches):
-        self.d_logging_meters['valid_acc'].update(d_acc)
-        self.d_logging_meters['valid_loss'].update(d_loss)
+    def evaluate_discriminator(self, d_loss, d_acc, batch_i, epoch_i, num_batches, partition=None):
 
-        logging.debug(f"D dev loss {self.d_logging_meters['valid_loss'].avg:.3f}, "
-                      f"acc {self.d_logging_meters['valid_acc'].avg:.3f} at batch {batch_i}")
+        assert partition in {"train", "valid", "test"}
+
+        self.d_logging_meters[f'{partition}_acc'].update(d_acc)
+        self.d_logging_meters[f'{partition}_loss'].update(d_loss)
+
+        logging.debug(f"D loss {self.d_logging_meters[f'{partition}_loss'].avg:.3f}, "
+                      f"acc {self.d_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
         self.write_summary({
-            "desc_val_loss": d_loss,
-            "desc_val_acc": d_acc,
+            f"Loss/{partition}/desc": d_loss,
+            f"Accuracy/{partition}/desc": d_acc,
         }, batch_i + (epoch_i - 1) * num_batches)
 
     def eval_loop(self, valloader, epoch_i):
@@ -382,12 +390,14 @@ class ModelTrainer:
                 predictions = logits.argmax(-1)
                 self.evaluate_generator(
                     predictions, sample["target"], loss, ntokens=sample["ntokens"],
-                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader)
+                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle"
                 )
 
                 # discriminator validation
                 d_loss, acc = self.discrimnator_loss_acc(sample)
-                self.evaluate_discriminator(d_loss, acc, batch_i=i, epoch_i=epoch_i, num_batches=len(valloader))
+                self.evaluate_discriminator(
+                    d_loss, acc, batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid"
+                )
 
 
     def train(self):

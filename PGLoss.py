@@ -26,6 +26,7 @@ class PGLoss(torch.nn.Module):
             if self.ignore_index != None:
                 logprobs[:, :, self.ignore_index] = 0
 
+            # loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i, :]))
             loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i]))
         
         if self.size_average:

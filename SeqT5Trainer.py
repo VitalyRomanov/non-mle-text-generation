@@ -69,12 +69,6 @@ class SeqT5Trainer(ModelTrainer):
                 self.discriminator.cpu()
             self.generator.cpu()
 
-    def create_losses(self):
-        # define loss function
-        self.g_criterion = torch.nn.NLLLoss(ignore_index=self.dataset.dst_dict.pad(), reduction='sum')
-        self.d_criterion = torch.nn.BCELoss()
-        self.pg_criterion = PGLoss(ignore_index=self.dataset.dst_dict.pad(), size_average=True, reduce=True)
-
     def handicap_discriminator(self):
         # TODO need this?
         # fix discriminator word embedding (as Wu et al. do)
@@ -103,26 +97,24 @@ class SeqT5Trainer(ModelTrainer):
         t5out = self.sequential_generation(sample)
 
         sys_out_batch = t5out.logits
-        prediction = sys_out_batch.argmax(dim=-1)
-        prediction = self.transform_from_t5(prediction)
+        prediction = self.transform_from_t5(sys_out_batch.argmax(dim=-1))
 
         with torch.no_grad():
-            reward = self.discriminator(sample['net_input']['src_tokens'], prediction)  # 64 X 1
+            reward = self.discriminator(sample['net_input']['src_tokens'], prediction)
 
-        train_trg_batch = sample['target']  # 64 x 50
+        pg_loss = self.pg_criterion(sys_out_batch, sample['target'], reward, self.use_cuda)
 
-        pg_loss = self.pg_criterion(sys_out_batch, train_trg_batch, reward, self.use_cuda)
-        sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']  # 64
-        logging_loss = pg_loss / math.log(2)
-        self.g_logging_meters['train_loss'].update(logging_loss.item(), sample_size)
-        logging.debug(
-            f"G policy gradient loss at batch {batch_i}: {pg_loss.item():.3f}, lr={self.g_optimizer.param_groups[0]['lr']}")
+        with torch.no_grad():
+            if (epoch * loader_len + batch_i) % 1 == 0:
+                self.evaluate_generator(
+                    prediction, sample['target'], pg_loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
+                )
+
         self.g_optimizer.zero_grad()
         pg_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
-
-        self.write_summary({"pg_train_loss": logging_loss}, batch_i + (epoch - 1) * loader_len)
 
     def mle_generator_loss(self, sample, return_logits=False):
 
@@ -134,8 +126,10 @@ class SeqT5Trainer(ModelTrainer):
 
         out_batch = sys_out_batch.contiguous().view(-1, sys_out_batch.size(-1))  # (64 X 50) X 6632
         trg_batch = sample['target'].view(-1)  # 64*50 = 3200
+        trg_batch = self.transform_for_t5(trg_batch)
 
-        loss = self.g_criterion(out_batch, trg_batch - 1)
+        # loss = t5out.loss
+        loss = self.g_criterion(out_batch, trg_batch)
         if return_logits:
             return loss, t5out.logits
         return loss  # t5out.loss
@@ -144,25 +138,27 @@ class SeqT5Trainer(ModelTrainer):
         # MLE training
         print("MLE Training")
 
-        loss = self.mle_generator_loss(sample)
-        sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-        logging_loss = loss.data / sample_size / math.log(2)
+        loss, logits = self.mle_generator_loss(sample, return_logits=True)
 
-        nsentences = sample['target'].size(0)
-        self.g_logging_meters['bsz'].update(nsentences)
-        self.g_logging_meters['train_loss'].update(logging_loss, sample_size)
-        logging.debug(
-            f"G MLE loss at batch {batch_i}: {self.g_logging_meters['train_loss'].avg:.3f}, lr={self.g_optimizer.param_groups[0]['lr']}")
+        predictions = self.transform_from_t5(logits.argmax(-1))
+
+        # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
+
+        with torch.no_grad():
+            if (epoch * loader_len + batch_i) % 1 == 0:
+                self.evaluate_generator(
+                    predictions, sample['target'], loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
+                )
+
         self.g_optimizer.zero_grad()
         loss.backward()
         # all-reduce grads and rescale by grad_denom
-        for p in self.generator.parameters():
-            if p.requires_grad:
-                p.grad.data.div_(sample_size)
+        # for p in self.generator.parameters():
+        #     if p.requires_grad:
+        #         p.grad.data.div_(sample_size)
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
-
-        self.write_summary({"mle_train_loss": logging_loss}, batch_i + (epoch - 1) * loader_len)
 
     def discrimnator_loss_acc(self, sample):
         bsz = sample['target'].size(0)  # batch_size = 64
@@ -170,7 +166,7 @@ class SeqT5Trainer(ModelTrainer):
 
         # now train with machine translation output i.e generator output
         true_sentence = sample['target']  # 64*50 = 3200
-        true_labels = Variable(torch.ones(bsz).float())  # 64 length vector
+        true_labels = Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
 
         if self.use_cuda:
             true_sentence = true_sentence.cuda()
@@ -187,7 +183,7 @@ class SeqT5Trainer(ModelTrainer):
         prediction = sys_out_batch.argmax(dim=-1)
         fake_sentence = self.transform_from_t5(prediction)
 
-        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())  # 64 length vector
+        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
 
         if self.use_cuda:
             fake_labels = fake_labels.cuda()
@@ -205,15 +201,15 @@ class SeqT5Trainer(ModelTrainer):
     def discriminator_step(self, sample, batch_i, epoch, loader_len):
         d_loss, acc = self.discrimnator_loss_acc(sample)
 
-        self.d_logging_meters['train_acc'].update(acc)
-        self.d_logging_meters['train_loss'].update(d_loss)
-        logging.debug(
-            f"D training loss {self.d_logging_meters['train_loss'].avg:.3f}, acc {self.d_logging_meters['train_acc'].avg:.3f} at batch {batch_i}")
+        with torch.no_grad():
+            if (epoch * loader_len + batch_i) % 1 == 0:
+                self.evaluate_discriminator(
+                    d_loss, acc, batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train"
+                )
+
         self.d_optimizer.zero_grad()
         d_loss.backward()
         self.d_optimizer.step()
-
-        self.write_summary({"desc_train_loss": d_loss, "desc_train_acc": acc}, batch_i + (epoch - 1) * loader_len)
 
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
@@ -253,12 +249,14 @@ class SeqT5Trainer(ModelTrainer):
                 predictions = self.transform_from_t5(logits.argmax(-1))
                 self.evaluate_generator(
                     predictions, sample["target"], loss, ntokens=sample["ntokens"],
-                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader)
+                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="rl"
                 )
 
                 # discriminator validation
                 d_loss, acc = self.discrimnator_loss_acc(sample)
-                self.evaluate_discriminator(d_loss, acc, batch_i=i, epoch_i=epoch_i, num_batches=len(valloader))
+                self.evaluate_discriminator(
+                    d_loss, acc, batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid"
+                )
 
     def train(self):
         args = self.args
@@ -357,9 +355,26 @@ class SeqT5Mle(SeqT5Trainer):
             self.mle_step(sample, i, epoch_i, len(trainloader))
             num_update += 1
 
-            self.discriminator_step(sample, i, epoch_i, len(trainloader))
-
         return num_update
+
+    def eval_loop(self, valloader, epoch_i):
+        for i, sample in enumerate(valloader):
+
+            with torch.no_grad():
+                if self.use_cuda:
+                    # wrap input tensors in cuda tensors
+                    sample = utils.make_variable(sample, cuda=cuda)
+
+                # generator validation
+                t5out = self.sequential_generation(sample, top_k=1, temp=.5)
+                logits = t5out.logits
+                loss = t5out.loss
+                # loss, logits = self.mle_generator_loss(sample, return_logits=True)
+                predictions = self.transform_from_t5(logits.argmax(-1))
+                self.evaluate_generator(
+                    predictions, sample["target"], loss, ntokens=sample["ntokens"],
+                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="rl"
+                )
 
 
 class SeqT5RL(SeqT5Trainer):
