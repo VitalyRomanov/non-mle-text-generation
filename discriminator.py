@@ -53,6 +53,53 @@ class AttDiscriminator(nn.Module):
         return torch.sigmoid(logits)
 
 
+# class AttDiscriminator(nn.Module):
+#     # TODO replace with LM
+#     def __init__(self, args, src_dict, dst_dict, use_cuda=True, dropout=0.1, num_heads=1):
+#         super().__init__()
+#
+#         # TODO resolve the problem
+#         self.src_dict_size = 200000 #len(src_dict)
+#         self.trg_dict_size = 200000 #len(dst_dict)
+#
+#         self.src_pad_idx = src_dict.pad()
+#         self.pad_idx = dst_dict.pad()
+#         self.fixed_max_len = args.fixed_max_len
+#         self.use_cuda = use_cuda
+#         self.num_heads = num_heads
+#
+#         assert args.encoder_embed_dim == args.decoder_embed_dim
+#
+#         emb_dim = 30
+#
+#         # TODO share this across encoder and decoder
+#         self.embed_src_tokens = Embedding(self.src_dict_size, emb_dim, src_dict.pad())
+#         self.embed_trg_tokens = Embedding(self.trg_dict_size, emb_dim, dst_dict.pad())
+#
+#         self.attention = nn.MultiheadAttention(emb_dim, num_heads=num_heads, dropout=dropout)
+#         self.attention2 = nn.MultiheadAttention(emb_dim, num_heads=num_heads, dropout=dropout)
+#         self.prediction = Linear(emb_dim * num_heads, 1, bias=False)
+#
+#     def forward(self, src_sentence, trg_sentence):
+#         src_out = self.embed_src_tokens(src_sentence)
+#         trg_out = self.embed_trg_tokens(trg_sentence)
+#
+#         src_mask = ~(src_sentence == self.src_pad_idx)
+#         # trg_mask = ~(trg_sentence == self.pad_idx)
+#         # attn_mask = (src_mask.unsqueeze(2) * trg_mask.unsqueeze(1)).repeat(self.num_heads, 1, 1)
+#
+#         query = trg_out.permute(1, 0, 2)
+#         key = value = src_out.permute(1, 0, 2)
+#
+#         mh_att, _ = self.attention(query, key, value)
+#         mh_att, _ = self.attention2(mh_att, mh_att, mh_att) #, key_padding_mask=trg_mask)
+#
+#         mh_att = mh_att.permute(1, 0, 2)
+#
+#         logits =  self.prediction(mh_att).squeeze(2)
+#         return torch.sigmoid(logits)
+
+
 class Discriminator(nn.Module):
     def __init__(self, args, src_dict, dst_dict, use_cuda = True):
         super(Discriminator, self).__init__()
