@@ -16,18 +16,25 @@ class PGLoss(torch.nn.Module):
 
     def forward(self, logprobs, label, reward, use_cuda):
         bsz, seqlen, _ = logprobs.size()
-        loss = 0
+        # loss = 0
         logprobs = logprobs.clone()
-        for i in range(bsz):
-            trg_label = label[i,:]
-            row_idx = torch.LongTensor(range(seqlen))
-            if use_cuda:
-                row_idx = row_idx.cuda()
-            if self.ignore_index != None:
-                logprobs[:, :, self.ignore_index] = 0
 
-            # loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i, :]))
-            loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i]))
+        with torch.no_grad():
+            mask = torch.zeros_like(logprobs)
+            mask = torch.scatter(mask, 2, label.unsqueeze(2), 1.)
+
+        loss = -torch.sum(logprobs * reward.unsqueeze(2) * mask)
+
+        # for i in range(bsz):
+        #     trg_label = label[i,:]
+        #     row_idx = torch.LongTensor(range(seqlen))
+        #     if use_cuda:
+        #         row_idx = row_idx.cuda()
+        #     if self.ignore_index != None:
+        #         logprobs[:, :, self.ignore_index] = 0
+        #
+        #     loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i, :]))
+        #     # loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i]))
         
         if self.size_average:
             loss = loss/bsz    

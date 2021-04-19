@@ -250,8 +250,8 @@ class ModelTrainer:
 
         # now train with machine translation output i.e generator output
         true_sentence = sample['target']  # 64*50 = 3200
-        # true_labels = Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
-        true_labels = Variable(torch.ones(sample['target'].size(0)).float())
+        true_labels = Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
+        # true_labels = Variable(torch.ones(sample['target'].size(0)).float())
 
         if self.use_cuda:
             true_sentence = true_sentence.cuda()
@@ -262,8 +262,8 @@ class ModelTrainer:
 
         fake_sentence = sys_out_batch.argmax(-1)
 
-        # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
-        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
+        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
+        # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
 
         if self.use_cuda:
             fake_labels = fake_labels.cuda()
