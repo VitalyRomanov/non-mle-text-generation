@@ -26,7 +26,7 @@ def write_split(split, path, split_name, src, tgt):
 
 def write_splits(
         path: str, train: Iterable[Tuple[str, str]] = None, val: Iterable[Tuple[str, str]] = None,
-        test: Iterable[Tuple[str, str]] = None, src: str = None, tgt: str = None, tokenizer: str = None
+        test: Iterable[Tuple[str, str]] = None, src: str = None, tgt: str = None, tokenizer: str = None, lenlim=None
 ):
     """
     Write data splits and their binarization to disk
@@ -116,6 +116,8 @@ def write_splits(
 
     len_src = 0
     len_tgt = 0
+    num_added = 0
+    skipped = 0
 
     src_dict, tgt_dict = load_dictionaries(path, src, tgt)
 
@@ -129,15 +131,22 @@ def write_splits(
         for src_line, tgt_line in zip(src_lines, tgt_lines):
             src_tokens = Tokenizer.tokenize(src_line.strip("\n"), src_dict, tokenize=tokenize, add_if_not_exist=False)
             tgt_tokens = Tokenizer.tokenize(tgt_line.strip("\n"), tgt_dict, tokenize=tokenize, add_if_not_exist=False)
+            if lenlim is not None and (
+                len(src_tokens) > lenlim or len(tgt_tokens) > lenlim
+            ):
+                skipped += 1
+                continue
             src_bin.add_item(src_tokens)
             tgt_bin.add_item(tgt_tokens)
             len_src += len(src_tokens)
             len_tgt += len(tgt_tokens)
+            num_added += 1
         src_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{src}.idx"))
         tgt_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.idx"))
 
-    print(f"Source average length {len_src / len(src_dict)}")
-    print(f"Target average length {len_tgt / len(tgt_dict)}")
+    print(f"Source average length {len_src / num_added}")
+    print(f"Target average length {len_tgt / num_added}")
+    print(f"Skipped: {skipped}")
 
 
 def generate_nmt_splits(

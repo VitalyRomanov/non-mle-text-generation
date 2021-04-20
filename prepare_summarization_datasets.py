@@ -82,7 +82,7 @@ def generate_cnn_dailymail_dataset(args):
     write_splits(
         dataset_path,
         train=generate(dataset["train"]), val=generate(dataset["validation"]), test=generate(dataset["test"]),
-        src="original", tgt="summary", tokenizer=args.tokenizer
+        src="original", tgt="summary", tokenizer=args.tokenizer, lenlim=args.lenlim
     )
 
 
@@ -92,6 +92,7 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer", default="regular", help="regular|bpe|t5-small")
     parser.add_argument("--output", default="data-bin")
     parser.add_argument("--prefix", default="")
+    parser.add_argument("--lenlim", default=None, type=int)
 
     args = parser.parse_args()
 
