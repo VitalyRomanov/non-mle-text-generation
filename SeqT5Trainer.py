@@ -88,7 +88,7 @@ class SeqT5Trainer(ModelTrainer):
         return self.generator(
             self.transform_for_t5(sample['net_input']['src_tokens']),
             labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
-            temperature=temp
+            temperature=temp, epsilon=self.args.imp_smpl_epsilon
         )
 
     def pg_step(self, sample, batch_i, epoch, loader_len):
@@ -107,7 +107,7 @@ class SeqT5Trainer(ModelTrainer):
         with torch.no_grad():
             if (epoch * loader_len + batch_i) % 1 == 0:
                 self.evaluate_generator(
-                    prediction, sample['target'], pg_loss,
+                    sample["net_input"]["src_tokens"], prediction, sample['target'], pg_loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
                 )
 
@@ -147,7 +147,7 @@ class SeqT5Trainer(ModelTrainer):
         with torch.no_grad():
             if (epoch * loader_len + batch_i) % 1 == 0:
                 self.evaluate_generator(
-                    predictions, sample['target'], loss,
+                    sample["net_input"]["src_tokens"], predictions, sample['target'], loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
                 )
 
@@ -220,12 +220,16 @@ class SeqT5Trainer(ModelTrainer):
 
             ## part I: use gradient policy method to train the generator
 
-            # use policy gradient training when random.random() > 50%
-            if random.random() >= 0.5:  # TODO why use both?
-                self.pg_step(sample, i, epoch_i, len(trainloader))
+            if epoch_i > self.args.discriminator_pretraining:
+                # use policy gradient training when random.random() > 50%
+                if random.random() >= 0.5:  # TODO why use both?
+                    self.pg_step(sample, i, epoch_i, len(trainloader))
+                else:
+                    self.mle_step(sample, i, epoch_i, len(trainloader))
+                num_update += 1
             else:
-                self.mle_step(sample, i, epoch_i, len(trainloader))
-            num_update += 1
+                if i == 0:
+                    print("Pretraining discriminator for onr epoch")
 
             # part II: train the discriminator
             # if i % 10 == 0:
@@ -248,7 +252,7 @@ class SeqT5Trainer(ModelTrainer):
                 # loss, logits = self.mle_generator_loss(sample, return_logits=True)
                 predictions = self.transform_from_t5(logits.argmax(-1))
                 self.evaluate_generator(
-                    predictions, sample["target"], loss, ntokens=sample["ntokens"],
+                    sample["net_input"]["src_tokens"], predictions, sample["target"], loss, ntokens=sample["ntokens"],
                     batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="rl"
                 )
 
@@ -372,7 +376,7 @@ class SeqT5Mle(SeqT5Trainer):
                 # loss, logits = self.mle_generator_loss(sample, return_logits=True)
                 predictions = self.transform_from_t5(logits.argmax(-1))
                 self.evaluate_generator(
-                    predictions, sample["target"], loss, ntokens=sample["ntokens"],
+                    sample["net_input"]["src_tokens"], predictions, sample["target"], loss, ntokens=sample["ntokens"],
                     batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="rl"
                 )
 
@@ -388,8 +392,12 @@ class SeqT5RL(SeqT5Trainer):
             if self.use_cuda:
                 sample = utils.make_variable(sample, cuda=cuda)
 
-            self.pg_step(sample, i, epoch_i, len(trainloader))
-            num_update += 1
+            if epoch_i > self.args.discriminator_pretraining:
+                self.pg_step(sample, i, epoch_i, len(trainloader))
+                num_update += 1
+            else:
+                if i == 0:
+                    print("Pretraining discriminator")
 
             self.discriminator_step(sample, i, epoch_i, len(trainloader))
 

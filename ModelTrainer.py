@@ -203,7 +203,7 @@ class ModelTrainer:
         with torch.no_grad():
             if (epoch * loader_len + batch_i) % 1 == 0:
                 self.evaluate_generator(
-                    prediction, sample['target'], pg_loss,
+                    sample["net_input"]["src_tokens"], prediction, sample['target'], pg_loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
                 )
 
@@ -234,7 +234,7 @@ class ModelTrainer:
         with torch.no_grad():
             if (epoch * loader_len + batch_i) % 1 == 0:
                 self.evaluate_generator(
-                    predictions, sample['target'], loss,
+                    sample["net_input"]["src_tokens"], predictions, sample['target'], loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
                 )
 
@@ -303,12 +303,16 @@ class ModelTrainer:
 
             ## part I: use gradient policy method to train the generator
 
-            # use policy gradient training when random.random() > 50%
-            if random.random() >= 0.5:  # TODO why use both?
-                self.pg_step(sample, i, epoch_i, len(trainloader))
+            if epoch_i > self.args.discriminator_pretraining:
+                # use policy gradient training when random.random() > 50%
+                if random.random() >= 0.5:  # TODO why use both?
+                    self.pg_step(sample, i, epoch_i, len(trainloader))
+                else:
+                    self.mle_step(sample, i, epoch_i, len(trainloader))
+                num_update += 1
             else:
-                self.mle_step(sample, i, epoch_i, len(trainloader))
-            num_update += 1
+                if i == 0:
+                    print("Pretraining discriminator for onr epoch")
 
             # part II: train the discriminator
             # if i % 10 == 0:
@@ -347,7 +351,7 @@ class ModelTrainer:
         return gen_acc
 
     def evaluate_generator(
-            self, predictions, targets, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
+            self, original, predictions, targets, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
             strategy=None
     ):
 
@@ -359,7 +363,7 @@ class ModelTrainer:
         loss = loss.data / sample_size / math.log(2)
         gen_acc = self.token_accuracy(predictions, targets)
         bleu = self.compute_bleu(predictions, targets)
-        rouge = self.compute_rouge(predictions, targets)
+        rouge = self.compute_rouge(predictions, original)
 
         self.g_logging_meters[f'{partition}_loss'].update(loss, sample_size)
         self.g_logging_meters[f'{partition}_acc'].update(gen_acc)
@@ -410,7 +414,7 @@ class ModelTrainer:
                 loss, logits = self.mle_generator_loss(sample, return_logits=True)
                 predictions = logits.argmax(-1)
                 self.evaluate_generator(
-                    predictions, sample["target"], loss, ntokens=sample["ntokens"],
+                    sample["net_input"]["src_tokens"], predictions, sample["target"], loss, ntokens=sample["ntokens"],
                     batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle"
                 )
 

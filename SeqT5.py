@@ -494,7 +494,7 @@ class SeqT5(T5ForConditionalGeneration):
     def gumbel_decode(
             self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
             hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
-            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1.
+            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1., epsilon=0.
     ):
         """
         Decode with Gumbel softmax sampling with specified temperature
@@ -532,7 +532,9 @@ class SeqT5(T5ForConditionalGeneration):
 
             last_token_logits = lm_logits[:, -1, :]
             last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1)
-            last_token_logits = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+            last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+
+            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
 
             one_hot_softmax = nn.functional.gumbel_softmax(
                 last_token_logits, tau=temperature, hard=True
@@ -573,7 +575,7 @@ class SeqT5(T5ForConditionalGeneration):
     def top_p_decode(
             self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
             hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
-            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1.
+            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1., epsilon=0.
     ):
         """
         Decode with top p gradual sampling for RL objective
@@ -606,7 +608,9 @@ class SeqT5(T5ForConditionalGeneration):
             lm_logits = self.compute_logits(decoder_outputs)
 
             last_token_logits = lm_logits[:, -1, :] / temperature
-            last_token_logits = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+            last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+
+            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
 
             probs = nn.functional.softmax(
                 last_token_logits, dim=1
@@ -636,7 +640,8 @@ class SeqT5(T5ForConditionalGeneration):
         decoding_style="tf",  # options: teacher forcing (tf), gumbel (gumbel), top p (rl)
         temperature=1.,
         top_k=0,
-        top_p=1.
+        top_p=1.,
+        epsilon=0.
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -731,9 +736,9 @@ class SeqT5(T5ForConditionalGeneration):
             decoder_outputs, lm_logits = self.teacher_forcing_decode(*decode_args, top_k=top_k, top_p=top_p)
             output_onehot = None
         elif decoding_style == "gumbel":
-            decoder_outputs, lm_logits, output_onehot = self.gumbel_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p)
+            decoder_outputs, lm_logits, output_onehot = self.gumbel_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
         elif decoding_style == "rl":
-            decoder_outputs, lm_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p)
+            decoder_outputs, lm_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
             output_onehot = None
         else:
             raise ValueError(f"`decoding_style` is {decoding_style} but supported values are: tf|gumbel|rl")

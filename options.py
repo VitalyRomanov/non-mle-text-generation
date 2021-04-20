@@ -66,6 +66,8 @@ def add_optimization_args(parser):
                         help="Learning rate of the generator. (default=0.001)")
     parser.add_argument("--d_learning_rate", "-dlr", default=1e-3, type=float,
                         help="Learning rate of the discriminator. (default=0.001)")
+    parser.add_argument("--d_pretraining", "-dp", dest="discriminator_pretraining", default=3, type=int,
+                        help="Number of epochs for discriminator pretraining")
     parser.add_argument("--lr_shrink", default=0.5, type=float,
                         help='learning rate shrink factor, lr_new = (lr * lr_shrink)')
     parser.add_argument('--min-g-lr', default=1e-5, type=float, metavar='LR',
@@ -154,5 +156,7 @@ def add_generation_args(parser):
                         help='unknown word penalty: <0 produces more unks, >0 produces fewer')
     parser.add_argument('--replace-unk', nargs='?', const=True, default=None,
                         help='perform unknown replacement (optionally with alignment dictionary)')
+    parser.add_argument('--imp_smpl_epsilon', "-epsilon", dest="imp_smpl_epsilon", default=0.1, type=float,
+                        help='Epsilon parameter from ColdGANs to ensure importance sampling is valid')
 
     return parser
