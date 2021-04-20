@@ -241,11 +241,13 @@ class LanguagePairDataset(torch.utils.data.Dataset):
 
         # sort by descending source length
         src_lengths = torch.LongTensor([s['source'].numel() for s in samples])
+        trg_lengths = torch.LongTensor([s['target'].numel() for s in samples])
         src_lengths, sort_order = src_lengths.sort(descending=True)
         id = id.index_select(0, sort_order)
         src_tokens = src_tokens.index_select(0, sort_order)
         prev_output_tokens = prev_output_tokens.index_select(0, sort_order)
         target = target.index_select(0, sort_order)
+        trg_lengths = trg_lengths.index_select(0, sort_order)
 
         return {
             'id': id,
@@ -256,6 +258,7 @@ class LanguagePairDataset(torch.utils.data.Dataset):
                 'prev_output_tokens': prev_output_tokens,
             },
             'target': target,
+            "target_lengths": trg_lengths
         }
 
     @staticmethod
