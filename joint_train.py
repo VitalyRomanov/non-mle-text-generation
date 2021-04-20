@@ -70,6 +70,7 @@ class LstmMleTrainer(ModelTrainer):
         args.bidirectional = False
 
         super(LstmMleTrainer, self).__init__(args)
+        self.training_strategy = "mle"
 
     def create_generator(self, args):
         self.generator = LSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
@@ -77,34 +78,6 @@ class LstmMleTrainer(ModelTrainer):
 
     def create_discriminator(self, args):
         pass
-
-    def train_loop(self, trainloader, epoch_i, num_update):
-        for i, sample in enumerate(trainloader):
-
-            if self.use_cuda:
-                # wrap input tensors in cuda tensors
-                sample = utils.make_variable(sample, cuda=cuda)
-
-            self.mle_step(sample, i, epoch_i, len(trainloader))
-            num_update += 1
-
-        return num_update
-
-    def eval_loop(self, valloader, epoch_i):
-        for i, sample in enumerate(valloader):
-
-            with torch.no_grad():
-                if self.use_cuda:
-                    # wrap input tensors in cuda tensors
-                    sample = utils.make_variable(sample, cuda=cuda)
-
-                # generator validation
-                loss, logits = self.mle_generator_loss(sample, return_logits=True)
-                predictions = logits.argmax(-1)
-                self.evaluate_generator(
-                    predictions, sample["target"], loss, ntokens=sample["ntokens"],
-                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader)
-                )
 
 
 class VarLSTMTrainer(LstmMleTrainer):
@@ -120,19 +93,28 @@ class VarLSTMTrainer(LstmMleTrainer):
         args.bidirectional = False
 
         super(VarLSTMTrainer, self).__init__(args)
+        self.training_strategy = "mle"
 
     def create_generator(self, args):
         self.generator = VarLSTMModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
         self.kld_weight = 1.
         print("Generator loaded successfully!")
 
-    def mle_generator_loss(self, sample):
-        sys_out_batch, kld = self.generator(sample)
-        out_batch = sys_out_batch.contiguous().view(-1, sys_out_batch.size(-1))  # (64 X 50) X 6632
-        trg_batch = sample['target'].view(-1)  # 64*50 = 3200
+    def wrap_for_output(self, sample, logits, kld):
+        output = {
+            "logits": logits,
+            "target": sample["target"],
+            "mask": self.get_length_mask(sample["target"]),
+            "prediction": logits.argmax(-1)
+        }
 
-        loss = self.g_criterion(out_batch, trg_batch) + self.kld_weight * kld
-        return loss
+        output["loss"] = self.g_criterion(output["logits"][output["mask"], :], output["target"][output["mask"]]) + self.kld_weight * kld
+        return output
+
+    def teacher_forcing_generation(self, sample):
+        logits, kld = self.generator(sample)
+
+        return self.wrap_for_output(sample, logits, kld)
 
 
 if __name__ == "__main__":
