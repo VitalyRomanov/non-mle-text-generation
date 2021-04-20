@@ -6,3 +6,4 @@ transformers
 sacrebleu
 tensorboard
 sentencepiece
+rouge_score

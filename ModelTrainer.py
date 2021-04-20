@@ -52,6 +52,7 @@ class ModelTrainer:
 
         import datasets
         self.bleu_metric = datasets.load_metric('sacrebleu')
+        self.rouge_metric = datasets.load_metric('rouge')
 
     def set_gpu(self, args):
         # args.gpuid = ""  # TODO disable cuda
@@ -101,6 +102,8 @@ class ModelTrainer:
         d_logging_meters['valid_acc'] = AverageMeter()
         d_logging_meters['train_bleu'] = AverageMeter()
         d_logging_meters['valid_bleu'] = AverageMeter()
+        d_logging_meters['train_rouge'] = AverageMeter()
+        d_logging_meters['valid_rouge'] = AverageMeter()
         d_logging_meters['bsz'] = AverageMeter()  # sentences per batch
 
         self.g_logging_meters = g_logging_meters
@@ -329,7 +332,14 @@ class ModelTrainer:
             predictions=self.decode_sentences(predictions),
             references=self.decode_sentences(references, for_referece=True)
         )
-        return bleu["score"]
+        return bleu
+
+    def compute_rouge(self, predictions, references):
+        rouge = self.rouge_metric.compute(
+            predictions=self.decode_sentences(predictions),
+            references=self.decode_sentences(references)
+        )
+        return rouge
 
     def token_accuracy(self, predictions, targets):
         token_labels = targets.reshape(-1, )
@@ -349,18 +359,29 @@ class ModelTrainer:
         loss = loss.data / sample_size / math.log(2)
         gen_acc = self.token_accuracy(predictions, targets)
         bleu = self.compute_bleu(predictions, targets)
+        rouge = self.compute_rouge(predictions, targets)
 
         self.g_logging_meters[f'{partition}_loss'].update(loss, sample_size)
         self.g_logging_meters[f'{partition}_acc'].update(gen_acc)
-        self.d_logging_meters[f'{partition}_bleu'].update(bleu)
+        # self.d_logging_meters[f'{partition}_bleu'].update(bleu)
+        # self.d_logging_meters[f'{partition}_rouge'].update(rouge)
 
         logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
-                      f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f}, "
-                      f"bleu {self.d_logging_meters[f'{partition}_bleu'].avg:.3f} at batch {batch_i}")
+                      f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
         self.write_summary({
             f"Loss/{partition}/{strategy}/gen": loss,
             f"Accuracy/{partition}/gen": gen_acc,
-            f"bleu/{partition}/gen": bleu
+            f"bleu/{partition}/score": bleu["score"],
+            f"bleu/{partition}/P1": bleu["precisions"][0],
+            f"bleu/{partition}/P2": bleu["precisions"][1],
+            f"bleu/{partition}/P3": bleu["precisions"][2],
+            f"bleu/{partition}/P4": bleu["precisions"][3],
+            f"rouge/{partition}/rouge1/high/f1": rouge["rouge1"].high.fmeasure,
+            f"rouge/{partition}/rouge2/high/f1": rouge["rouge2"].high.fmeasure,
+            f"rouge/{partition}/rougeL/high/f1": rouge["rougeL"].high.fmeasure,
+            f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision,
+            f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision,
+            f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision,
         }, batch_i + (epoch_i - 1) * num_batches)
 
     def evaluate_discriminator(self, d_loss, d_acc, batch_i, epoch_i, num_batches, partition=None):
