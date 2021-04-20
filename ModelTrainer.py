@@ -513,6 +513,8 @@ class ModelTrainer:
                 self.discriminator.train()
             update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
 
+            print(f"Training batches: {len(trainloader)}")
+
             num_update = self.train_loop(trainloader, epoch_i, num_update)
 
             # validation
@@ -540,6 +542,8 @@ class ModelTrainer:
             for key, val in self.d_logging_meters.items():
                 if val is not None:
                     val.reset()
+
+            print(f"Validation batches: {len(valloader)}")
 
             self.eval_loop(valloader, epoch_i)
 
