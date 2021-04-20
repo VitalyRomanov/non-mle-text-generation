@@ -335,7 +335,7 @@ class ModelTrainer:
                 # wrap input tensors in cuda tensors
                 sample = utils.make_variable(sample, cuda=cuda)
 
-            if epoch_i > self.args.discriminator_pretraining:
+            if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
                 if hasattr(self, "discriminator"):
                     if self.training_strategy == "alternate":
                         if random.random() >= 0.5:  # TODO why use both?
