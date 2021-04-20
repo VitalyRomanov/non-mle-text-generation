@@ -88,6 +88,10 @@ def add_optimization_args(parser):
                        help='If bigger than 0, use that number of mini-batches for each epoch,'  # TODO understand whether this is same as rehearsal 
                             ' where each sample is drawn randomly without replacement from the'
                             ' dataset')
+    parser.add_argument('--sample-val-without-replacement', default=0, type=int, metavar='N',
+                        help='If bigger than 0, use that number of mini-batches for each evaluation epoch,'  # TODO understand whether this is same as rehearsal 
+                             ' where each sample is drawn randomly without replacement from the'
+                             ' dataset')
     parser.add_argument('--sentence-avg', action='store_true',  # TODO check impact
                        help='normalize gradients by the number of sentences in a batch'
                             ' (default is to normalize by number of tokens)')

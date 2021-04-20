@@ -491,7 +491,7 @@ class ModelTrainer:
                 max_tokens=args.max_tokens,
                 max_sentences=args.joint_batch_size,
                 max_positions=max_positions_train,
-                # seed=seed,
+                seed=seed,
                 epoch=epoch_i,
                 sample_without_replacement=args.sample_without_replacement,
                 sort_by_source_size=(epoch_i <= args.curriculum),
@@ -533,6 +533,8 @@ class ModelTrainer:
                 descending=True,  # largest batch first to warm the caching allocator
                 shard_id=args.distributed_rank,
                 num_shards=args.distributed_world_size,
+                seed=seed,
+                sample_without_replacement=args.sample_val_without_replacement
             )
 
             # reset meters

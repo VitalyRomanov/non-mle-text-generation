@@ -159,14 +159,22 @@ class LanguageDatasets(object):
     def eval_dataloader(self, split, num_workers=0, max_tokens=None,
                         max_sentences=None, max_positions=(1024, 1024),
                         skip_invalid_size_inputs_valid_test=False,
-                        descending=False, shard_id=0, num_shards=1):
+                        descending=False, shard_id=0, num_shards=1,
+                        seed=None, sample_without_replacement=0):
         dataset = self.splits[split]
-        batch_sampler = batches_by_size(
-            dataset.src, dataset.dst, max_tokens, max_sentences,
-            max_positions=max_positions,
-            ignore_invalid_inputs=skip_invalid_size_inputs_valid_test,
-            descending=descending)
-        batch_sampler = mask_batches(batch_sampler, shard_id=shard_id, num_shards=num_shards)
+        with numpy_seed(seed):
+            batch_sampler = shuffled_batches_by_size(
+                dataset.src, dataset.dst, max_tokens=max_tokens,
+                max_sentences=max_sentences,
+                sample=sample_without_replacement, max_positions=max_positions,
+                sort_by_source_size=False)
+            batch_sampler = mask_batches(batch_sampler, shard_id=shard_id, num_shards=num_shards)
+        # batch_sampler = batches_by_size(
+        #     dataset.src, dataset.dst, max_tokens, max_sentences,
+        #     max_positions=max_positions,
+        #     ignore_invalid_inputs=skip_invalid_size_inputs_valid_test,
+        #     descending=descending)
+        # batch_sampler = mask_batches(batch_sampler, shard_id=shard_id, num_shards=num_shards)
         return torch.utils.data.DataLoader(
             dataset, num_workers=num_workers, collate_fn=dataset.collater,
             batch_sampler=batch_sampler)
