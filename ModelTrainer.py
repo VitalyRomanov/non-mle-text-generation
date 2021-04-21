@@ -201,10 +201,10 @@ class ModelTrainer:
         output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)
 
         with torch.no_grad():
-            if self.sequential_decoding_style == "gumbel":
-                reward = self.discriminator(output['input_onehot'], output["output_onehot"])
-            else:
-                reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
+            # if self.sequential_decoding_style == "gumbel":
+            #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
+            # else:
+            reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
 
         pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
 
@@ -287,12 +287,12 @@ class ModelTrainer:
         with torch.no_grad():
             gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)  # 64 X 50 X 6632
 
-        if self.sequential_decoding_style == "gumbel":
-            true_sentence = gen_output["target_onehot"]
-            fake_sentence = gen_output["output_onehot"]
-            src_sentence = gen_output["input_onehot"]
-        else:
-            fake_sentence = gen_output["prediction"]
+        # if self.sequential_decoding_style == "gumbel":
+        #     true_sentence = gen_output["target_onehot"]
+        #     fake_sentence = gen_output["output_onehot"]
+        #     src_sentence = gen_output["input_onehot"]
+        # else:
+        fake_sentence = gen_output["prediction"]
 
         fake_labels = -Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
         # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())

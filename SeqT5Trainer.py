@@ -132,7 +132,7 @@ class SeqT5Gumbel(SeqT5RL):
         self.training_strategy = "alternate"  # alternate | mle | rl
         self.sequential_decoding_style = "gumbel"
 
-    def create_discriminator(self, args):
-        self.discriminator = GumbelDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
-                                              use_cuda=self.use_cuda)
-        print("Discriminator loaded successfully!")
+    # def create_discriminator(self, args):
+    #     self.discriminator = GumbelDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+    #                                           use_cuda=self.use_cuda)
+    #     print("Discriminator loaded successfully!")
