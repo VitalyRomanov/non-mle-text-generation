@@ -157,7 +157,7 @@ class ModelTrainer:
     def create_losses(self):
         # define loss function
         self._g_criterion = torch.nn.NLLLoss(reduction='mean')
-        self.d_criterion = torch.nn.BCELoss()  #torch.nn.SoftMarginLoss() #
+        self.d_criterion = torch.nn.SoftMarginLoss() #torch.nn.BCELoss()  #
         self._pg_criterion = PGLoss(ignore_index=self.dataset.dst_dict.pad(), size_average=True, reduce=True)
         self._logsoftmax = torch.nn.LogSoftmax(dim=-1)
 

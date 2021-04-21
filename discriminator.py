@@ -120,7 +120,7 @@ class AttDiscriminator(nn.Module):
 
         out = self.fc(out)
 
-        return torch.sigmoid(out.permute(1, 0, 2).squeeze(2))
+        return torch.tanh(out.permute(1, 0, 2).squeeze(2))
 
     def generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
