@@ -58,12 +58,21 @@ class SeqT5Trainer(ModelTrainer):
     def transform_from_t5(self, tensor):
         return tensor + 1
 
-    def wrap_for_output(self, sample, logits):
+    def wrap_for_output(self, sample, logits, input_onehot=None, output_onehot=None, target_onehot=None):
+        if input_onehot is not None: # add zeros to use indexing from 1
+            zeros = torch.zeros((input_onehot.shape[0], input_onehot.shape[1], 1))
+            input_onehot = torch.cat([zeros, input_onehot], dim=2)
+            output_onehot = torch.cat([zeros, output_onehot], dim=2)
+            target_onehot = torch.cat([zeros, target_onehot], dim=2)
+
         output = {
             "logits": logits,
             "target": sample["target"],
             "mask": self.get_length_mask(sample["target"]),
-            "prediction": self.transform_from_t5(logits.argmax(-1))
+            "prediction": self.transform_from_t5(logits.argmax(-1)),
+            "input_onehot": input_onehot,
+            "output_onehot": output_onehot,
+            "target_onehot": target_onehot,
         }
 
         output["loss"] = self.g_criterion(
@@ -73,13 +82,15 @@ class SeqT5Trainer(ModelTrainer):
         return output
 
     def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.9, temp=1.):
-        logits = self.generator(
+        t5out = self.generator(
             self.transform_for_t5(sample['net_input']['src_tokens']),
             labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
             temperature=temp, epsilon=self.args.imp_smpl_epsilon
-        ).logits
+        )
 
-        return self.wrap_for_output(sample, logits)
+        if decoding_style == "gumbel":
+            return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
+        return self.wrap_for_output(sample, t5out.logits)
 
     def teacher_forcing_generation(self, sample):
         logits = self.generator(

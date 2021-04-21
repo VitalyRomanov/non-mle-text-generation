@@ -120,6 +120,34 @@ class AttDiscriminator(nn.Module):
 
         out = self.fc(out)
 
+        return torch.sigmoid(out.permute(1, 0, 2).squeeze(2))
+
+    def generate_square_subsequent_mask(self, sz):
+        mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+        return mask
+
+
+class GumbelDiscriminator(nn.Module):
+    def __init__(self, args, src_dict, dst_dict, emb_dim=50, use_cuda=True, dropout=0.1, num_heads=1, layers=1):
+        super(AttDiscriminator, self).__init__()
+        vocab_size = 200000 # len(src_dict)
+        self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
+        self.decoder_layer = nn.TransformerDecoderLayer(emb_dim, num_heads, dim_feedforward=emb_dim)
+        self.decoder = nn.TransformerDecoder(self.decoder_layer, num_layers=layers)
+        self.mask = self.generate_square_subsequent_mask(1)
+
+        self.fc = nn.Linear(emb_dim, 1)
+
+    def forward(self, source_onehot, target_onehot):
+        source_emb = (source_onehot @ self.embed_src_tokens.weight).permute(1, 0, 2)
+        target_emb = (target_onehot @ self.embed_trg_tokens.weight).permute(1, 0, 2)
+        if self.mask.size(0) != target_emb.size(0):
+            self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_onehot.device)
+        out = self.decoder(target_emb, source_emb, tgt_mask=self.mask)
+
+        out = self.fc(out)
+
         return torch.tanh(out.permute(1, 0, 2).squeeze(2))
 
     def generate_square_subsequent_mask(self, sz):

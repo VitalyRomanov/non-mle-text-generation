@@ -157,7 +157,7 @@ class ModelTrainer:
     def create_losses(self):
         # define loss function
         self._g_criterion = torch.nn.NLLLoss(reduction='mean')
-        self.d_criterion = torch.nn.SoftMarginLoss() # torch.nn.BCELoss()
+        self.d_criterion = torch.nn.BCELoss()  #torch.nn.SoftMarginLoss() #
         self._pg_criterion = PGLoss(ignore_index=self.dataset.dst_dict.pad(), size_average=True, reduce=True)
         self._logsoftmax = torch.nn.LogSoftmax(dim=-1)
 
@@ -203,7 +203,7 @@ class ModelTrainer:
         with torch.no_grad():
             reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, self.use_cuda)
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
@@ -284,7 +284,12 @@ class ModelTrainer:
         with torch.no_grad():
             gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)  # 64 X 50 X 6632
 
-        fake_sentence = gen_output["prediction"]
+        if self.sequential_decoding_style == "gumbel":
+            true_sentence = gen_output["target_onehot"]
+            fake_sentence = gen_output["output_onehot"]
+            src_sentence = gen_output["input_onehot"]
+        else:
+            fake_sentence = gen_output["prediction"]
 
         fake_labels = -Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
         # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
@@ -347,7 +352,7 @@ class ModelTrainer:
                     elif self.training_strategy == "rl":
                         self.pg_step(sample, i, epoch_i, len(trainloader))
                     else:
-                        raise ValueError(f"Ivalid traiing strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
+                        raise ValueError(f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
                 else:
                     self.mle_step(sample, i, epoch_i, len(trainloader))
                 num_update += 1

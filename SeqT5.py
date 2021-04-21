@@ -45,7 +45,9 @@ num_heads)`.
 
 @dataclass
 class AdversarialSeq2SeqLMOutput(Seq2SeqLMOutput):
+    input_onehot: Optional[Tuple[torch.FloatTensor]] = None
     output_onehot: Optional[Tuple[torch.FloatTensor]] = None
+    target_onehot: Optional[Tuple[torch.FloatTensor]] = None
 
 
 class T5SequentialDecoder(T5Stack):
@@ -734,12 +736,18 @@ class SeqT5(T5ForConditionalGeneration):
 
         if decoding_style == "tf":
             decoder_outputs, lm_logits = self.teacher_forcing_decode(*decode_args, top_k=top_k, top_p=top_p)
+            input_onehot = None
             output_onehot = None
+            target_onehot = None
         elif decoding_style == "gumbel":
+            input_onehot = nn.functional.one_hot(input_ids, num_classes=self.decoder.embed_tokens.num_embeddings).float()
+            target_onehot = nn.functional.one_hot(decoder_input_ids, num_classes=self.decoder.embed_tokens.num_embeddings).float()
             decoder_outputs, lm_logits, output_onehot = self.gumbel_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
         elif decoding_style == "rl":
             decoder_outputs, lm_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
+            input_onehot = None
             output_onehot = None
+            target_onehot = None
         else:
             raise ValueError(f"`decoding_style` is {decoding_style} but supported values are: tf|gumbel|rl")
 
@@ -763,7 +771,9 @@ class SeqT5(T5ForConditionalGeneration):
             encoder_last_hidden_state=encoder_outputs.last_hidden_state,
             encoder_hidden_states=encoder_outputs.hidden_states,
             encoder_attentions=encoder_outputs.attentions,
-            output_onehot=output_onehot
+            input_onehot=input_onehot,
+            output_onehot=output_onehot,
+            target_onehot=target_onehot
         )
 
 
