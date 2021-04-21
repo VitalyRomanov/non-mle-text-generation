@@ -506,7 +506,7 @@ class SeqT5(T5ForConditionalGeneration):
         output_onehot = None
         for tok_ind in range(decoder_input_ids.shape[1]):
             if tok_ind == 0:
-                one_hot_softmax = torch.zeros((decoder_input_ids.shape[0], self.decoder.embed_tokens.num_embeddings))
+                one_hot_softmax = torch.zeros((decoder_input_ids.shape[0], self.decoder.embed_tokens.num_embeddings)).to(decoder_input_ids.device)
                 one_hot_softmax[:, 0] = 1.
                 decoder_inputs_embeds = (one_hot_softmax @ self.decoder.embed_tokens.weight).unsqueeze(1)
             else:
