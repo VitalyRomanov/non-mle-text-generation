@@ -531,7 +531,7 @@ class SeqT5(T5ForConditionalGeneration):
             lm_logits = self.compute_logits(decoder_outputs)
 
             last_token_logits = lm_logits[:, -1, :]
-            last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1)
+            last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1).to(decoder_input_ids.device)
             last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
 
             last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
