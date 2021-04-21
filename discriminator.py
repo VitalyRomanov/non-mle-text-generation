@@ -130,7 +130,7 @@ class AttDiscriminator(nn.Module):
 
 class GumbelDiscriminator(nn.Module):
     def __init__(self, args, src_dict, dst_dict, emb_dim=50, use_cuda=True, dropout=0.1, num_heads=1, layers=1):
-        super(AttDiscriminator, self).__init__()
+        super(GumbelDiscriminator, self).__init__()
         vocab_size = 200000 # len(src_dict)
         self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
         self.decoder_layer = nn.TransformerDecoderLayer(emb_dim, num_heads, dim_feedforward=emb_dim)

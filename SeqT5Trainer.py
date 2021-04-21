@@ -1,6 +1,6 @@
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
-from discriminator import Discriminator, AttDiscriminator
+from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator
 
 
 class SeqT5Trainer(ModelTrainer):
@@ -120,12 +120,17 @@ class SeqT5Mle(SeqT5Trainer):
 class SeqT5RL(SeqT5Trainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.training_strategy = "rl"  # alternate | mle | rl
+        self.training_strategy = "alternate"  # alternate | mle | rl
         self.sequential_decoding_style = "rl"
 
 
 class SeqT5Gumbel(SeqT5RL):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.training_strategy = "rl"  # alternate | mle | rl
+        self.training_strategy = "alternate"  # alternate | mle | rl
         self.sequential_decoding_style = "gumbel"
+
+    def create_discriminator(self, args):
+        self.discriminator = GumbelDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+                                              use_cuda=self.use_cuda)
+        print("Discriminator loaded successfully!")
