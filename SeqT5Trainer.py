@@ -81,7 +81,7 @@ class SeqT5Trainer(ModelTrainer):
         )
         return output
 
-    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.9, temp=1.):
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.6, temp=.2):
         t5out = self.generator(
             self.transform_for_t5(sample['net_input']['src_tokens']),
             labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
