@@ -299,7 +299,7 @@ class ModelTrainer:
         labels = torch.cat([fake_labels, true_labels], dim=0)
 
         d_loss = self.d_criterion(disc_out, labels)
-        acc = torch.sum(torch.round(disc_out) == labels).float() / len(labels)
+        acc = torch.sum(torch.round(disc_out) == labels).float() / torch.numel(labels)
         return d_loss, acc
 
     def discriminator_step(self, sample, batch_i, epoch, loader_len):
@@ -388,7 +388,7 @@ class ModelTrainer:
     def token_accuracy(self, predictions, targets, target_mask):
         predictions = predictions[target_mask]
         targets = targets[target_mask]
-        gen_acc = torch.sum(predictions == targets).float() / len(targets)
+        gen_acc = torch.sum(predictions == targets).float() / torch.numel(targets)
         return gen_acc
 
     def evaluate_generator(
@@ -455,12 +455,13 @@ class ModelTrainer:
                     # wrap input tensors in cuda tensors
                     sample = utils.make_variable(sample, cuda=cuda)
 
-                # generator validation
-                output = self.eval_generation(sample)
-                self.evaluate_generator(
-                    sample["net_input"]["src_tokens"], output["prediction"], output["target"], output["mask"], output["loss"], ntokens=sample["ntokens"],
-                    batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle"
-                )
+                if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
+                    # generator validation
+                    output = self.eval_generation(sample)
+                    self.evaluate_generator(
+                        sample["net_input"]["src_tokens"], output["prediction"], output["target"], output["mask"], output["loss"], ntokens=sample["ntokens"],
+                        batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle"
+                    )
 
                 # discriminator validation
                 if hasattr(self, "discriminator"):

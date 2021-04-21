@@ -114,9 +114,9 @@ class AttDiscriminator(nn.Module):
     def forward(self, source_ids, target_ids):
         source_emb = self.embed_src_tokens(source_ids).permute(1, 0, 2)
         target_emb = self.embed_trg_tokens(target_ids).permute(1, 0, 2)
-        # if self.mask.size(0) != target_emb.size(0):
-        #     self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
-        out = self.decoder(target_emb, source_emb) #, tgt_mask=self.mask)
+        if self.mask.size(0) != target_emb.size(0):
+            self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
+        out = self.decoder(target_emb, source_emb, tgt_mask=self.mask)
 
         out = self.fc(out)
 
