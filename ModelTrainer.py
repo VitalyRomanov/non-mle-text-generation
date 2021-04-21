@@ -299,7 +299,7 @@ class ModelTrainer:
         labels = torch.cat([fake_labels, true_labels], dim=0)
 
         d_loss = self.d_criterion(disc_out, labels)
-        acc = torch.sum(torch.round(disc_out) == labels).float() / torch.numel(labels)
+        acc = torch.sum(torch.round(disc_out) == labels).float() / torch.numel(labels) * 100
         return d_loss, acc
 
     def discriminator_step(self, sample, batch_i, epoch, loader_len):
@@ -388,7 +388,7 @@ class ModelTrainer:
     def token_accuracy(self, predictions, targets, target_mask):
         predictions = predictions[target_mask]
         targets = targets[target_mask]
-        gen_acc = torch.sum(predictions == targets).float() / torch.numel(targets)
+        gen_acc = torch.sum(predictions == targets).float() / torch.numel(targets) * 100
         return gen_acc
 
     def evaluate_generator(
