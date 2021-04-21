@@ -157,7 +157,7 @@ class ModelTrainer:
     def create_losses(self):
         # define loss function
         self._g_criterion = torch.nn.NLLLoss(reduction='mean')
-        self.d_criterion = torch.nn.BCELoss()
+        self.d_criterion = torch.nn.SoftMarginLoss() # torch.nn.BCELoss()
         self._pg_criterion = PGLoss(ignore_index=self.dataset.dst_dict.pad(), size_average=True, reduce=True)
         self._logsoftmax = torch.nn.LogSoftmax(dim=-1)
 
@@ -286,7 +286,7 @@ class ModelTrainer:
 
         fake_sentence = gen_output["prediction"]
 
-        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
+        fake_labels = -Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
         # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
 
         if self.use_cuda:
@@ -353,7 +353,7 @@ class ModelTrainer:
                 num_update += 1
             else:
                 if i == 0:
-                    print("Pretraining discriminator for onr epoch")
+                    print("Pretraining discriminator for one epoch")
 
             if hasattr(self, "discriminator"):
                 self.discriminator_step(sample, i, epoch_i, len(trainloader))
