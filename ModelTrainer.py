@@ -455,6 +455,9 @@ class ModelTrainer:
 
             sample = self.format_sample(sample, extra_tokens=50)
 
+            if i > len(valloader):
+                print("Batch overflow")
+
             with torch.no_grad():
                 if self.use_cuda:
                     # wrap input tensors in cuda tensors
