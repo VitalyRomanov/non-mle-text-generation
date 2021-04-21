@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Gumbel
 from torch.nn import CrossEntropyLoss
+from torch.utils import checkpoint
 from transformers import T5ForConditionalGeneration, T5PreTrainedModel, top_k_top_p_filtering
 
 from transformers.activations import ACT2FN
@@ -493,6 +494,40 @@ class SeqT5(T5ForConditionalGeneration):
         logger.info(f"Creating Gumbel distribution with parameters loc={gumbel_loc}, scale={gumbel_scale}")
         self.gumbel_dist = Gumbel(torch.tensor([gumbel_loc]), torch.tensor([gumbel_scale]))
 
+    def gumbel_make_step(self, return_dict, use_cache):
+        def custom_forward(*inputs):
+            decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,\
+            decoder_head_mask, head_mask, output_attentions, output_hidden_states = inputs
+            decoder_outputs = self.decoder(
+                input_ids=None,  # decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_values=past_key_values,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=decoder_head_mask,
+                encoder_head_mask=head_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+
+            lm_logits = self.compute_logits(decoder_outputs)
+
+            attentions = (decoder_outputs.attentions if decoder_outputs.attentions is not None else torch.Tensor([]), )
+            cross_attentions = (decoder_outputs.cross_attentions if decoder_outputs.cross_attentions is not None else torch.Tensor([]),)
+            hidden_states = (decoder_outputs.hidden_states if decoder_outputs.hidden_states is not None else torch.Tensor([]),)
+            last_hidden_state = (decoder_outputs.last_hidden_state, )
+            past_key_values = ()
+            for elem in decoder_outputs.past_key_values:
+                past_key_values += (torch.Tensor([len(elem)]),)
+                past_key_values += elem
+            lm_logits = (lm_logits, )
+            dec_out = attentions + cross_attentions + hidden_states + last_hidden_state + past_key_values + lm_logits
+            return dec_out
+        return custom_forward
+
     def gumbel_decode(
             self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
             hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
@@ -531,6 +566,28 @@ class SeqT5(T5ForConditionalGeneration):
             )
 
             lm_logits = self.compute_logits(decoder_outputs)
+
+            # d_out = checkpoint.checkpoint(self.gumbel_make_step(return_dict=True, use_cache=use_cache), decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,
+            #              decoder_head_mask, head_mask, output_attentions, output_hidden_states)
+            #
+            # lm_logits = d_out[-1]
+            #
+            # def assemble_past_key_values(parts):
+            #     final = []
+            #     for ind, part in enumerate(parts):
+            #         if len(part) == 1:
+            #             final.append(parts[ind+1: ind+1+part.int().item()])
+            #     return tuple(final)
+            #
+            # past_key_values = assemble_past_key_values(d_out[4:-1])
+            #
+            # decoder_outputs = BaseModelOutputWithPastAndCrossAttentions(
+            #     attentions=d_out[0] if len(d_out[0]) != 0 else None,
+            #     cross_attentions=d_out[1] if len(d_out[1]) != 0 else None,
+            #     hidden_states=d_out[2] if len(d_out[2]) != 0 else None,
+            #     last_hidden_state=d_out[3],
+            #     past_key_values=past_key_values
+            # )
 
             last_token_logits = lm_logits[:, -1, :]
             last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1).to(decoder_input_ids.device)

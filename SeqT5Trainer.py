@@ -60,9 +60,11 @@ class SeqT5Trainer(ModelTrainer):
 
     def wrap_for_output(self, sample, logits, input_onehot=None, output_onehot=None, target_onehot=None):
         if input_onehot is not None: # add zeros to use indexing from 1
-            zeros = torch.zeros((input_onehot.shape[0], input_onehot.shape[1], 1))
+            zeros = torch.zeros((input_onehot.shape[0], input_onehot.shape[1], 1)).to(input_onehot.device)
             input_onehot = torch.cat([zeros, input_onehot], dim=2)
+            zeros = torch.zeros((output_onehot.shape[0], output_onehot.shape[1], 1)).to(output_onehot.device)
             output_onehot = torch.cat([zeros, output_onehot], dim=2)
+            zeros = torch.zeros((target_onehot.shape[0], target_onehot.shape[1], 1)).to(target_onehot.device)
             target_onehot = torch.cat([zeros, target_onehot], dim=2)
 
         output = {

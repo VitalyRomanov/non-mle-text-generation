@@ -201,7 +201,10 @@ class ModelTrainer:
         output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)
 
         with torch.no_grad():
-            reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
+            if self.sequential_decoding_style == "gumbel":
+                reward = self.discriminator(output['input_onehot'], output["output_onehot"])
+            else:
+                reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
 
         pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
 
