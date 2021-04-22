@@ -148,7 +148,7 @@ class GumbelDiscriminator(nn.Module):
     def forward(self, source_onehot, target_onehot):
         source_emb = (source_onehot @ self.embed_src_tokens.weight[:source_onehot.shape[-1], :]).permute(1, 0, 2)
         target_emb = (target_onehot @ self.embed_trg_tokens.weight[:target_onehot.shape[-1], :]).permute(1, 0, 2)
-        return checkpoint.checkpoint(self.do_stuff, source_emb, target_emb)
+        return self.do_stuff(source_emb, target_emb)# checkpoint.checkpoint(self.do_stuff, source_emb, target_emb)
 
     def do_stuff(self, source_emb, target_emb):
 
