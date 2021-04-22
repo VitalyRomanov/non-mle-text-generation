@@ -90,8 +90,8 @@ class SeqT5Trainer(ModelTrainer):
             temperature=temp, epsilon=self.args.imp_smpl_epsilon
         )
 
-        if decoding_style == "gumbel":
-            return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
+        # if decoding_style == "gumbel":
+        #     return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
         return self.wrap_for_output(sample, t5out.logits)
 
     def teacher_forcing_generation(self, sample):
