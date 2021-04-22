@@ -1,3 +1,5 @@
+from torch.autograd import Variable
+
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
 from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator
@@ -132,7 +134,74 @@ class SeqT5Gumbel(SeqT5RL):
         self.training_strategy = "alternate"  # alternate | mle | rl
         self.sequential_decoding_style = "gumbel"
 
-    # def create_discriminator(self, args):
-    #     self.discriminator = GumbelDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
-    #                                           use_cuda=self.use_cuda)
-    #     print("Discriminator loaded successfully!")
+    def create_discriminator(self, args):
+        self.discriminator = GumbelDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+                                              use_cuda=self.use_cuda)
+        print("Discriminator loaded successfully!")
+
+    def pg_step(self, sample, batch_i, epoch, loader_len):
+        print("Policy Gradient Training")
+
+        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)
+
+        reward = self.discriminator(output['input_onehot'], output["output_onehot"])
+
+        loss = self.d_criterion(reward, torch.ones_like(reward))
+
+        with torch.no_grad():
+            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
+                )
+
+        self.g_optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
+        self.g_optimizer.step()
+
+    def discrimnator_loss_acc(self, sample):
+        bsz = sample['target'].size(0)  # batch_size = 64
+        src_sentence = sample['net_input']['src_tokens']  # 64 x max-len i.e 64 X 50
+
+        # now train with machine translation output i.e generator output
+        true_labels = Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample[
+            'target'].size(1))
+        # true_labels = Variable(torch.ones(sample['target'].size(0)).float())
+
+        if self.use_cuda:
+            true_labels = true_labels.cuda()
+
+        with torch.no_grad():
+            gen_output = self.sequential_generation(sample,
+                                                    decoding_style=self.sequential_decoding_style)  # 64 X 50 X 6632
+
+        true_sentence = gen_output["target_onehot"]
+        fake_sentence = gen_output["output_onehot"]
+        src_sentence = gen_output["input_onehot"]
+
+        fake_labels = -Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample[
+            'target'].size(1))
+        # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
+
+        if self.use_cuda:
+            fake_labels = fake_labels.cuda()
+
+        disc_out_neg = self.discriminator(src_sentence, fake_sentence)
+        disc_out_pos = self.discriminator(src_sentence, true_sentence)
+        disc_out = torch.cat([disc_out_neg.squeeze(1), disc_out_pos.squeeze(1)], dim=0)
+
+        labels = torch.cat([fake_labels, true_labels], dim=0)
+
+        d_loss = self.d_criterion(disc_out, labels)
+        acc = torch.sum(torch.round(disc_out) == labels).float() / torch.numel(labels) * 100
+        return d_loss, acc
+
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.6, temp=.2):
+        t5out = self.generator(
+            self.transform_for_t5(sample['net_input']['src_tokens']),
+            labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
+            temperature=temp, epsilon=self.args.imp_smpl_epsilon
+        )
+
+        return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
