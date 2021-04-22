@@ -166,6 +166,30 @@ class T5SequentialDecoder(T5Stack):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
+            # def create_closure(use_cache, output_attentions, extended_attention_mask, encoder_extended_attention_mask):
+            #     def compute_layer(*inputs):
+            #         hidden_states, position_bias, encoder_hidden_states, \
+            #         encoder_decoder_position_bias, layer_head_mask, encoder_layer_head_mask, past_key_value = inputs
+            #         layer_outputs = layer_module(
+            #             hidden_states,
+            #             attention_mask=extended_attention_mask,
+            #             position_bias=position_bias,
+            #             encoder_hidden_states=encoder_hidden_states,
+            #             encoder_attention_mask=encoder_extended_attention_mask,
+            #             encoder_decoder_position_bias=encoder_decoder_position_bias,
+            #             layer_head_mask=layer_head_mask,
+            #             encoder_layer_head_mask=encoder_layer_head_mask,
+            #             past_key_value=past_key_value,
+            #             use_cache=use_cache,
+            #             output_attentions=output_attentions,
+            #         )
+            #         lo = (layer_outputs[0],) + layer_outputs[1] +  (layer_outputs[2],) + (layer_outputs[3],)
+            #         return lo
+            #     return compute_layer
+            # lo = checkpoint.checkpoint(create_closure(use_cache, output_attentions, extended_attention_mask, encoder_extended_attention_mask), hidden_states, position_bias, encoder_hidden_states,
+            #         encoder_decoder_position_bias, layer_head_mask, encoder_layer_head_mask, past_key_value)
+            # layer_outputs = (lo[0], lo[1:-2], lo[-2], lo[-1])
+
             layer_outputs = layer_module(
                 hidden_states,
                 attention_mask=extended_attention_mask,
@@ -497,7 +521,7 @@ class SeqT5(T5ForConditionalGeneration):
     def gumbel_make_step(self, return_dict, use_cache):
         def custom_forward(*inputs):
             decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,\
-            decoder_head_mask, head_mask, output_attentions, output_hidden_states = inputs
+            decoder_head_mask, head_mask, output_attentions, output_hidden_states, dummy_tensor = inputs
             decoder_outputs = self.decoder(
                 input_ids=None,  # decoder_input_ids,
                 attention_mask=decoder_attention_mask,
@@ -514,18 +538,7 @@ class SeqT5(T5ForConditionalGeneration):
             )
 
             lm_logits = self.compute_logits(decoder_outputs)
-
-            attentions = (decoder_outputs.attentions if decoder_outputs.attentions is not None else torch.Tensor([]), )
-            cross_attentions = (decoder_outputs.cross_attentions if decoder_outputs.cross_attentions is not None else torch.Tensor([]),)
-            hidden_states = (decoder_outputs.hidden_states if decoder_outputs.hidden_states is not None else torch.Tensor([]),)
-            last_hidden_state = (decoder_outputs.last_hidden_state, )
-            past_key_values = ()
-            for elem in decoder_outputs.past_key_values:
-                past_key_values += (torch.Tensor([len(elem)]),)
-                past_key_values += elem
-            lm_logits = (lm_logits, )
-            dec_out = attentions + cross_attentions + hidden_states + last_hidden_state + past_key_values + lm_logits
-            return dec_out
+            return lm_logits
         return custom_forward
 
     def gumbel_decode(
@@ -550,44 +563,27 @@ class SeqT5(T5ForConditionalGeneration):
                 decoder_inputs_embeds = torch.cat([decoder_inputs_embeds, (one_hot_softmax @ self.decoder.embed_tokens.weight).unsqueeze(1)],
                                           dim=1)
 
-            decoder_outputs = self.decoder(
-                input_ids=None,  # decoder_input_ids,
-                attention_mask=decoder_attention_mask,
-                inputs_embeds=decoder_inputs_embeds,
-                past_key_values=past_key_values,
-                encoder_hidden_states=hidden_states,
-                encoder_attention_mask=attention_mask,
-                head_mask=decoder_head_mask,
-                encoder_head_mask=head_mask,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
-
-            lm_logits = self.compute_logits(decoder_outputs)
-
-            # d_out = checkpoint.checkpoint(self.gumbel_make_step(return_dict=True, use_cache=use_cache), decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,
-            #              decoder_head_mask, head_mask, output_attentions, output_hidden_states)
-            #
-            # lm_logits = d_out[-1]
-            #
-            # def assemble_past_key_values(parts):
-            #     final = []
-            #     for ind, part in enumerate(parts):
-            #         if len(part) == 1:
-            #             final.append(parts[ind+1: ind+1+part.int().item()])
-            #     return tuple(final)
-            #
-            # past_key_values = assemble_past_key_values(d_out[4:-1])
-            #
-            # decoder_outputs = BaseModelOutputWithPastAndCrossAttentions(
-            #     attentions=d_out[0] if len(d_out[0]) != 0 else None,
-            #     cross_attentions=d_out[1] if len(d_out[1]) != 0 else None,
-            #     hidden_states=d_out[2] if len(d_out[2]) != 0 else None,
-            #     last_hidden_state=d_out[3],
-            #     past_key_values=past_key_values
+            # decoder_outputs = self.decoder(
+            #     input_ids=None,  # decoder_input_ids,
+            #     attention_mask=decoder_attention_mask,
+            #     inputs_embeds=decoder_inputs_embeds,
+            #     past_key_values=past_key_values,
+            #     encoder_hidden_states=hidden_states,
+            #     encoder_attention_mask=attention_mask,
+            #     head_mask=decoder_head_mask,
+            #     encoder_head_mask=head_mask,
+            #     use_cache=use_cache,
+            #     output_attentions=output_attentions,
+            #     output_hidden_states=output_hidden_states,
+            #     return_dict=return_dict,
             # )
+            #
+            # lm_logits = self.compute_logits(decoder_outputs)
+
+            dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+
+            lm_logits = checkpoint.checkpoint(self.gumbel_make_step(return_dict=True, use_cache=use_cache), decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,
+                         decoder_head_mask, head_mask, output_attentions, output_hidden_states, dummy_tensor)
 
             last_token_logits = lm_logits[:, -1, :]
             last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1).to(decoder_input_ids.device)
@@ -603,6 +599,22 @@ class SeqT5(T5ForConditionalGeneration):
                 output_onehot = one_hot_softmax.unsqueeze(1)
             else:
                 output_onehot = torch.cat([output_onehot, one_hot_softmax.unsqueeze(1)], dim=1)
+
+        with torch.no_grad():
+            decoder_outputs = decoder_outputs = self.decoder(
+                input_ids=None,  # decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_values=past_key_values,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=decoder_head_mask,
+                encoder_head_mask=head_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
 
         return decoder_outputs, lm_logits, output_onehot
 
