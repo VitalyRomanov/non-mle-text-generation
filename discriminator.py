@@ -146,13 +146,14 @@ class GumbelDiscriminator(nn.Module):
         self.fc = nn.Linear(emb_dim, 1)
 
     def forward(self, source_onehot, target_onehot):
-        return checkpoint.checkpoint(self.do_stuff, source_onehot, target_onehot)
-
-    def do_stuff(self, source_onehot, target_onehot):
         source_emb = (source_onehot @ self.embed_src_tokens.weight[:source_onehot.shape[-1], :]).permute(1, 0, 2)
         target_emb = (target_onehot @ self.embed_trg_tokens.weight[:target_onehot.shape[-1], :]).permute(1, 0, 2)
+        return checkpoint.checkpoint(self.do_stuff, source_emb, target_emb)
+
+    def do_stuff(self, source_emb, target_emb):
+
         if self.mask.size(0) != target_emb.size(0):
-            self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_onehot.device)
+            self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_emb.device)
         out = self.decoder(target_emb, source_emb, tgt_mask=self.mask)
 
         out = self.fc(out)

@@ -194,6 +194,7 @@ class SeqT5Gumbel(SeqT5RL):
         labels = torch.cat([fake_labels, true_labels], dim=0)
 
         d_loss = self.d_criterion(disc_out, labels)
+        d_loss.requires_grad = True
         acc = torch.sum(torch.round(disc_out) == labels).float() / torch.numel(labels) * 100
         return d_loss, acc
 
