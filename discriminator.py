@@ -98,6 +98,7 @@ import torch.nn.functional as F
 #
 #         logits =  self.prediction(mh_att).squeeze(2)
 #         return torch.sigmoid(logits)
+from torch.utils import checkpoint
 
 
 class AttDiscriminator(nn.Module):
@@ -111,7 +112,12 @@ class AttDiscriminator(nn.Module):
 
         self.fc = nn.Linear(emb_dim, 1)
 
+        self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+
     def forward(self, source_ids, target_ids):
+        return checkpoint.checkpoint(self.do_stuff, source_ids, target_ids, self.dummy_tensor)
+
+    def do_stuff(self, source_ids, target_ids, dummy=None):
         source_emb = self.embed_src_tokens(source_ids).permute(1, 0, 2)
         target_emb = self.embed_trg_tokens(target_ids).permute(1, 0, 2)
         if self.mask.size(0) != target_emb.size(0):
