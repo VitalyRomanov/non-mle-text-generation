@@ -165,12 +165,13 @@ class ModelTrainer:
         self.pg_criterion = lambda pred, true, reward, use_cuda: self._pg_criterion(self._logsoftmax(pred), true, reward, use_cuda)
 
     def handicap_discriminator(self):
-        # fix discriminator word embedding (as Wu et al. do)
-        if hasattr(self, "discriminator"):
-            for p in self.discriminator.embed_src_tokens.parameters():
-                p.requires_grad = False
-            for p in self.discriminator.embed_trg_tokens.parameters():
-                p.requires_grad = False
+        pass
+        # # fix discriminator word embedding (as Wu et al. do)
+        # if hasattr(self, "discriminator"):
+        #     for p in self.discriminator.embed_src_tokens.parameters():
+        #         p.requires_grad = False
+        #     for p in self.discriminator.embed_trg_tokens.parameters():
+        #         p.requires_grad = False
 
     def create_optimizers(self, args):
         # define optimizer
