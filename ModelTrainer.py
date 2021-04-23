@@ -205,7 +205,8 @@ class ModelTrainer:
             # if self.sequential_decoding_style == "gumbel":
             #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
             # else:
-            reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
+            # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
+            reward = self.discriminator(output["prediction"], output["prediction"])
 
         pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
 
@@ -301,8 +302,10 @@ class ModelTrainer:
         if self.use_cuda:
             fake_labels = fake_labels.cuda()
 
-        disc_out_neg = self.discriminator(src_sentence, fake_sentence)
-        disc_out_pos = self.discriminator(src_sentence, true_sentence)
+        # disc_out_neg = self.discriminator(src_sentence, fake_sentence)
+        # disc_out_pos = self.discriminator(src_sentence, true_sentence)
+        disc_out_neg = self.discriminator(fake_sentence, fake_sentence)
+        disc_out_pos = self.discriminator(true_sentence, true_sentence)
         disc_out = torch.cat([disc_out_neg.squeeze(1), disc_out_pos.squeeze(1)], dim=0)
 
         labels = torch.cat([fake_labels, true_labels], dim=0)
