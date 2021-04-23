@@ -101,7 +101,7 @@ import torch.nn.functional as F
 
 
 class AttDiscriminator(nn.Module):
-    def __init__(self, args, src_dict, dst_dict, emb_dim=50, use_cuda=True, dropout=0.1, num_heads=1, layers=1):
+    def __init__(self, args, src_dict, dst_dict, emb_dim=50, use_cuda=True, dropout=0.1, num_heads=1, layers=3):
         super(AttDiscriminator, self).__init__()
         vocab_size = 200000 # len(src_dict)
         self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
