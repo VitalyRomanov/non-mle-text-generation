@@ -206,3 +206,6 @@ class SeqT5Gumbel(SeqT5RL):
         )
 
         return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
+
+    def handicap_discriminator(self):
+        pass

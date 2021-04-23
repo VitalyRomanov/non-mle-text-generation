@@ -138,17 +138,17 @@ class GumbelDiscriminator(nn.Module):
     def __init__(self, args, src_dict, dst_dict, emb_dim=50, use_cuda=True, dropout=0.1, num_heads=1, layers=1):
         super(GumbelDiscriminator, self).__init__()
         vocab_size = 200000 # len(src_dict)
-        # self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
+        self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
         self.decoder_layer = nn.TransformerDecoderLayer(emb_dim, num_heads, dim_feedforward=emb_dim)
         self.decoder = nn.TransformerDecoder(self.decoder_layer, num_layers=layers)
         self.mask = self.generate_square_subsequent_mask(1)
-        self.emb_w = nn.Parameter(torch.rand(vocab_size, emb_dim), requires_grad=True)
+        # self.emb_w = nn.Parameter(torch.rand(vocab_size, emb_dim), requires_grad=True)
 
         self.fc = nn.Linear(emb_dim, 1)
 
     def forward(self, source_onehot, target_onehot):
-        source_emb = (source_onehot @ self.emb_w[:source_onehot.shape[-1], :]).permute(1, 0, 2)
-        target_emb = (target_onehot @ self.emb_w[:target_onehot.shape[-1], :]).permute(1, 0, 2)
+        source_emb = (source_onehot @ self.embed_src_tokens.weight[:source_onehot.shape[-1], :]).permute(1, 0, 2)
+        target_emb = (target_onehot @ self.embed_trg_tokens.weight[:target_onehot.shape[-1], :]).permute(1, 0, 2)
         return self.do_stuff(source_emb, target_emb)# checkpoint.checkpoint(self.do_stuff, source_emb, target_emb)
 
     def do_stuff(self, source_emb, target_emb):
