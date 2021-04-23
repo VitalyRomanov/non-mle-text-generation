@@ -518,7 +518,7 @@ class SeqT5(T5ForConditionalGeneration):
         logger.info(f"Creating Gumbel distribution with parameters loc={gumbel_loc}, scale={gumbel_scale}")
         self.gumbel_dist = Gumbel(torch.tensor([gumbel_loc]), torch.tensor([gumbel_scale]))
 
-    def gumbel_make_step(self, return_dict, use_cache):
+    def seq_make_step(self, return_dict, use_cache):
         def custom_forward(*inputs):
             decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,\
             decoder_head_mask, head_mask, output_attentions, output_hidden_states, dummy_tensor = inputs
@@ -582,7 +582,7 @@ class SeqT5(T5ForConditionalGeneration):
 
             dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
 
-            lm_logits = checkpoint.checkpoint(self.gumbel_make_step(return_dict=True, use_cache=use_cache), decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,
+            lm_logits = checkpoint.checkpoint(self.seq_make_step(return_dict=True, use_cache=use_cache), decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,
                          decoder_head_mask, head_mask, output_attentions, output_hidden_states, dummy_tensor)
 
             last_token_logits = lm_logits[:, -1, :]
@@ -601,7 +601,7 @@ class SeqT5(T5ForConditionalGeneration):
                 output_onehot = torch.cat([output_onehot, one_hot_softmax.unsqueeze(1)], dim=1)
 
         with torch.no_grad():
-            decoder_outputs = decoder_outputs = self.decoder(
+            decoder_outputs = self.decoder(
                 input_ids=None,  # decoder_input_ids,
                 attention_mask=decoder_attention_mask,
                 inputs_embeds=decoder_inputs_embeds,
@@ -661,6 +661,42 @@ class SeqT5(T5ForConditionalGeneration):
                     decoder_inputs_embeds, self.decoder.embed_tokens(next_tokens)
                 ], dim=1)
 
+            # decoder_outputs = self.decoder(
+            #     input_ids=None,  # decoder_input_ids,
+            #     attention_mask=decoder_attention_mask,
+            #     inputs_embeds=decoder_inputs_embeds,
+            #     past_key_values=past_key_values,
+            #     encoder_hidden_states=hidden_states,
+            #     encoder_attention_mask=attention_mask,
+            #     head_mask=decoder_head_mask,
+            #     encoder_head_mask=head_mask,
+            #     use_cache=use_cache,
+            #     output_attentions=output_attentions,
+            #     output_hidden_states=output_hidden_states,
+            #     return_dict=return_dict,
+            # )
+            #
+            # lm_logits = self.compute_logits(decoder_outputs)
+
+            dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+            lm_logits = checkpoint.checkpoint(self.seq_make_step(return_dict=True, use_cache=use_cache),
+                                              decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+                                              hidden_states, attention_mask,
+                                              decoder_head_mask, head_mask, output_attentions, output_hidden_states,
+                                              dummy_tensor)
+
+            last_token_logits = lm_logits[:, -1, :] / temperature
+            last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+
+            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
+
+            probs = nn.functional.softmax(
+                last_token_logits, dim=1
+            )
+
+            next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
+
+        with torch.no_grad():
             decoder_outputs = self.decoder(
                 input_ids=None,  # decoder_input_ids,
                 attention_mask=decoder_attention_mask,
@@ -675,19 +711,6 @@ class SeqT5(T5ForConditionalGeneration):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
-
-            lm_logits = self.compute_logits(decoder_outputs)
-
-            last_token_logits = lm_logits[:, -1, :] / temperature
-            last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
-
-            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
-
-            probs = nn.functional.softmax(
-                last_token_logits, dim=1
-            )
-
-            next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
 
         return decoder_outputs, lm_logits
 
