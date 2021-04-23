@@ -157,7 +157,7 @@ class ModelTrainer:
     def create_losses(self):
         # define loss function
         self._g_criterion = torch.nn.NLLLoss(reduction='mean')
-        self.d_criterion = torch.nn.SoftMarginLoss() #torch.nn.BCELoss()  #
+        self.d_criterion = torch.nn.BCELoss()  #torch.nn.SoftMarginLoss() #
         self._pg_criterion = PGLoss(ignore_index=self.dataset.dst_dict.pad(), size_average=True, reduce=True)
         self._logsoftmax = torch.nn.LogSoftmax(dim=-1)
 
@@ -165,12 +165,13 @@ class ModelTrainer:
         self.pg_criterion = lambda pred, true, reward, use_cuda: self._pg_criterion(self._logsoftmax(pred), true, reward, use_cuda)
 
     def handicap_discriminator(self):
-        # fix discriminator word embedding (as Wu et al. do)
-        if hasattr(self, "discriminator"):
-            for p in self.discriminator.embed_src_tokens.parameters():
-                p.requires_grad = False
-            for p in self.discriminator.embed_trg_tokens.parameters():
-                p.requires_grad = False
+        pass
+        # # fix discriminator word embedding (as Wu et al. do)
+        # if hasattr(self, "discriminator"):
+        #     for p in self.discriminator.embed_src_tokens.parameters():
+        #         p.requires_grad = False
+        #     for p in self.discriminator.embed_trg_tokens.parameters():
+        #         p.requires_grad = False
 
     def create_optimizers(self, args):
         # define optimizer
@@ -201,6 +202,9 @@ class ModelTrainer:
         output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)
 
         with torch.no_grad():
+            # if self.sequential_decoding_style == "gumbel":
+            #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
+            # else:
             reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
 
         pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
@@ -284,14 +288,14 @@ class ModelTrainer:
         with torch.no_grad():
             gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)  # 64 X 50 X 6632
 
-        if self.sequential_decoding_style == "gumbel":
-            true_sentence = gen_output["target_onehot"]
-            fake_sentence = gen_output["output_onehot"]
-            src_sentence = gen_output["input_onehot"]
-        else:
-            fake_sentence = gen_output["prediction"]
+        # if self.sequential_decoding_style == "gumbel":
+        #     true_sentence = gen_output["target_onehot"]
+        #     fake_sentence = gen_output["output_onehot"]
+        #     src_sentence = gen_output["input_onehot"]
+        # else:
+        fake_sentence = gen_output["prediction"]
 
-        fake_labels = -Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
+        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample['target'].size(1))
         # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
 
         if self.use_cuda:

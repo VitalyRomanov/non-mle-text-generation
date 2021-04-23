@@ -98,6 +98,7 @@ import torch.nn.functional as F
 #
 #         logits =  self.prediction(mh_att).squeeze(2)
 #         return torch.sigmoid(logits)
+from torch.utils import checkpoint
 
 
 class AttDiscriminator(nn.Module):
@@ -111,7 +112,12 @@ class AttDiscriminator(nn.Module):
 
         self.fc = nn.Linear(emb_dim, 1)
 
+        self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+
     def forward(self, source_ids, target_ids):
+        return checkpoint.checkpoint(self.do_stuff, source_ids, target_ids, self.dummy_tensor)
+
+    def do_stuff(self, source_ids, target_ids, dummy=None):
         source_emb = self.embed_src_tokens(source_ids).permute(1, 0, 2)
         target_emb = self.embed_trg_tokens(target_ids).permute(1, 0, 2)
         if self.mask.size(0) != target_emb.size(0):
@@ -120,7 +126,7 @@ class AttDiscriminator(nn.Module):
 
         out = self.fc(out)
 
-        return torch.tanh(out.permute(1, 0, 2).squeeze(2))
+        return torch.sigmoid(out.permute(1, 0, 2).squeeze(2))
 
     def generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -136,19 +142,24 @@ class GumbelDiscriminator(nn.Module):
         self.decoder_layer = nn.TransformerDecoderLayer(emb_dim, num_heads, dim_feedforward=emb_dim)
         self.decoder = nn.TransformerDecoder(self.decoder_layer, num_layers=layers)
         self.mask = self.generate_square_subsequent_mask(1)
+        # self.emb_w = nn.Parameter(torch.rand(vocab_size, emb_dim), requires_grad=True)
 
         self.fc = nn.Linear(emb_dim, 1)
 
     def forward(self, source_onehot, target_onehot):
-        source_emb = (source_onehot @ self.embed_src_tokens.weight).permute(1, 0, 2)
-        target_emb = (target_onehot @ self.embed_trg_tokens.weight).permute(1, 0, 2)
+        source_emb = (source_onehot @ self.embed_src_tokens.weight[:source_onehot.shape[-1], :]).permute(1, 0, 2)
+        target_emb = (target_onehot @ self.embed_trg_tokens.weight[:target_onehot.shape[-1], :]).permute(1, 0, 2)
+        return self.do_stuff(source_emb, target_emb)# checkpoint.checkpoint(self.do_stuff, source_emb, target_emb)
+
+    def do_stuff(self, source_emb, target_emb):
+
         if self.mask.size(0) != target_emb.size(0):
-            self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_onehot.device)
+            self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_emb.device)
         out = self.decoder(target_emb, source_emb, tgt_mask=self.mask)
 
         out = self.fc(out)
 
-        return torch.tanh(out.permute(1, 0, 2).squeeze(2))
+        return torch.sigmoid(out.permute(1, 0, 2).squeeze(2))
 
     def generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)

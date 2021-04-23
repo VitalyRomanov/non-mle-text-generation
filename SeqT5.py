@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Gumbel
 from torch.nn import CrossEntropyLoss
+from torch.utils import checkpoint
 from transformers import T5ForConditionalGeneration, T5PreTrainedModel, top_k_top_p_filtering
 
 from transformers.activations import ACT2FN
@@ -164,6 +165,30 @@ class T5SequentialDecoder(T5Stack):
                     encoder_layer_head_mask = encoder_layer_head_mask.to(hidden_states.device)
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
+
+            # def create_closure(use_cache, output_attentions, extended_attention_mask, encoder_extended_attention_mask):
+            #     def compute_layer(*inputs):
+            #         hidden_states, position_bias, encoder_hidden_states, \
+            #         encoder_decoder_position_bias, layer_head_mask, encoder_layer_head_mask, past_key_value = inputs
+            #         layer_outputs = layer_module(
+            #             hidden_states,
+            #             attention_mask=extended_attention_mask,
+            #             position_bias=position_bias,
+            #             encoder_hidden_states=encoder_hidden_states,
+            #             encoder_attention_mask=encoder_extended_attention_mask,
+            #             encoder_decoder_position_bias=encoder_decoder_position_bias,
+            #             layer_head_mask=layer_head_mask,
+            #             encoder_layer_head_mask=encoder_layer_head_mask,
+            #             past_key_value=past_key_value,
+            #             use_cache=use_cache,
+            #             output_attentions=output_attentions,
+            #         )
+            #         lo = (layer_outputs[0],) + layer_outputs[1] +  (layer_outputs[2],) + (layer_outputs[3],)
+            #         return lo
+            #     return compute_layer
+            # lo = checkpoint.checkpoint(create_closure(use_cache, output_attentions, extended_attention_mask, encoder_extended_attention_mask), hidden_states, position_bias, encoder_hidden_states,
+            #         encoder_decoder_position_bias, layer_head_mask, encoder_layer_head_mask, past_key_value)
+            # layer_outputs = (lo[0], lo[1:-2], lo[-2], lo[-1])
 
             layer_outputs = layer_module(
                 hidden_states,
@@ -493,6 +518,29 @@ class SeqT5(T5ForConditionalGeneration):
         logger.info(f"Creating Gumbel distribution with parameters loc={gumbel_loc}, scale={gumbel_scale}")
         self.gumbel_dist = Gumbel(torch.tensor([gumbel_loc]), torch.tensor([gumbel_scale]))
 
+    def seq_make_step(self, return_dict, use_cache):
+        def custom_forward(*inputs):
+            decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,\
+            decoder_head_mask, head_mask, output_attentions, output_hidden_states, dummy_tensor = inputs
+            decoder_outputs = self.decoder(
+                input_ids=None,  # decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_values=past_key_values,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=decoder_head_mask,
+                encoder_head_mask=head_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+
+            lm_logits = self.compute_logits(decoder_outputs)
+            return lm_logits
+        return custom_forward
+
     def gumbel_decode(
             self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
             hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
@@ -515,22 +563,27 @@ class SeqT5(T5ForConditionalGeneration):
                 decoder_inputs_embeds = torch.cat([decoder_inputs_embeds, (one_hot_softmax @ self.decoder.embed_tokens.weight).unsqueeze(1)],
                                           dim=1)
 
-            decoder_outputs = self.decoder(
-                input_ids=None,  # decoder_input_ids,
-                attention_mask=decoder_attention_mask,
-                inputs_embeds=decoder_inputs_embeds,
-                past_key_values=past_key_values,
-                encoder_hidden_states=hidden_states,
-                encoder_attention_mask=attention_mask,
-                head_mask=decoder_head_mask,
-                encoder_head_mask=head_mask,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-            )
+            # decoder_outputs = self.decoder(
+            #     input_ids=None,  # decoder_input_ids,
+            #     attention_mask=decoder_attention_mask,
+            #     inputs_embeds=decoder_inputs_embeds,
+            #     past_key_values=past_key_values,
+            #     encoder_hidden_states=hidden_states,
+            #     encoder_attention_mask=attention_mask,
+            #     head_mask=decoder_head_mask,
+            #     encoder_head_mask=head_mask,
+            #     use_cache=use_cache,
+            #     output_attentions=output_attentions,
+            #     output_hidden_states=output_hidden_states,
+            #     return_dict=return_dict,
+            # )
+            #
+            # lm_logits = self.compute_logits(decoder_outputs)
 
-            lm_logits = self.compute_logits(decoder_outputs)
+            dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+
+            lm_logits = checkpoint.checkpoint(self.seq_make_step(return_dict=True, use_cache=use_cache), decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,
+                         decoder_head_mask, head_mask, output_attentions, output_hidden_states, dummy_tensor)
 
             last_token_logits = lm_logits[:, -1, :]
             last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1).to(decoder_input_ids.device)
@@ -546,6 +599,22 @@ class SeqT5(T5ForConditionalGeneration):
                 output_onehot = one_hot_softmax.unsqueeze(1)
             else:
                 output_onehot = torch.cat([output_onehot, one_hot_softmax.unsqueeze(1)], dim=1)
+
+        with torch.no_grad():
+            decoder_outputs = self.decoder(
+                input_ids=None,  # decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_values=past_key_values,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=decoder_head_mask,
+                encoder_head_mask=head_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
 
         return decoder_outputs, lm_logits, output_onehot
 
@@ -592,6 +661,42 @@ class SeqT5(T5ForConditionalGeneration):
                     decoder_inputs_embeds, self.decoder.embed_tokens(next_tokens)
                 ], dim=1)
 
+            # decoder_outputs = self.decoder(
+            #     input_ids=None,  # decoder_input_ids,
+            #     attention_mask=decoder_attention_mask,
+            #     inputs_embeds=decoder_inputs_embeds,
+            #     past_key_values=past_key_values,
+            #     encoder_hidden_states=hidden_states,
+            #     encoder_attention_mask=attention_mask,
+            #     head_mask=decoder_head_mask,
+            #     encoder_head_mask=head_mask,
+            #     use_cache=use_cache,
+            #     output_attentions=output_attentions,
+            #     output_hidden_states=output_hidden_states,
+            #     return_dict=return_dict,
+            # )
+            #
+            # lm_logits = self.compute_logits(decoder_outputs)
+
+            dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+            lm_logits = checkpoint.checkpoint(self.seq_make_step(return_dict=True, use_cache=use_cache),
+                                              decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+                                              hidden_states, attention_mask,
+                                              decoder_head_mask, head_mask, output_attentions, output_hidden_states,
+                                              dummy_tensor)
+
+            last_token_logits = lm_logits[:, -1, :] / temperature
+            last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+
+            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
+
+            probs = nn.functional.softmax(
+                last_token_logits, dim=1
+            )
+
+            next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
+
+        with torch.no_grad():
             decoder_outputs = self.decoder(
                 input_ids=None,  # decoder_input_ids,
                 attention_mask=decoder_attention_mask,
@@ -606,19 +711,6 @@ class SeqT5(T5ForConditionalGeneration):
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
             )
-
-            lm_logits = self.compute_logits(decoder_outputs)
-
-            last_token_logits = lm_logits[:, -1, :] / temperature
-            last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
-
-            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
-
-            probs = nn.functional.softmax(
-                last_token_logits, dim=1
-            )
-
-            next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
 
         return decoder_outputs, lm_logits
 
