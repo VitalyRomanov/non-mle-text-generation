@@ -194,7 +194,7 @@ class SeqT5Gumbel(SeqT5RL):
         labels = torch.cat([fake_labels, true_labels], dim=0)
 
         d_loss = self.d_criterion(disc_out, labels)
-        # d_loss.requires_grad = True
+
         acc = torch.sum(torch.round(disc_out) == labels).float() / torch.numel(labels) * 100
         return d_loss, acc
 
@@ -209,3 +209,27 @@ class SeqT5Gumbel(SeqT5RL):
 
     def handicap_discriminator(self):
         pass
+
+    def mle_step(self, sample, batch_i, epoch, loader_len):
+        # MLE training
+        print("MLE Training")
+
+        output = self.sequential_generation(sample, decoding_style="gumbel")
+        loss = output["loss"]
+        # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
+
+        with torch.no_grad():
+            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
+                )
+
+        self.g_optimizer.zero_grad()
+        loss.backward()
+        # all-reduce grads and rescale by grad_denom
+        # for p in self.generator.parameters():
+        #     if p.requires_grad:
+        #         p.grad.data.div_(sample_size)
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
+        self.g_optimizer.step()
