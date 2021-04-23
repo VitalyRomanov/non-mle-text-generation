@@ -1,5 +1,9 @@
+import random
+
+from torch import cuda
 from torch.autograd import Variable
 
+import utils
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
 from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator
@@ -210,7 +214,7 @@ class SeqT5Gumbel(SeqT5RL):
     def handicap_discriminator(self):
         pass
 
-    def mle_step(self, sample, batch_i, epoch, loader_len):
+    def seq_mle_step(self, sample, batch_i, epoch, loader_len):
         # MLE training
         print("MLE Training")
 
@@ -233,3 +237,40 @@ class SeqT5Gumbel(SeqT5RL):
         #         p.grad.data.div_(sample_size)
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
+
+    def train_loop(self, trainloader, epoch_i, num_update):
+        for i, sample in enumerate(trainloader):
+
+            sample = self.format_sample(sample)
+
+            if self.use_cuda:
+                # wrap input tensors in cuda tensors
+                sample = utils.make_variable(sample, cuda=cuda)
+
+            if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
+                if hasattr(self, "discriminator"):
+                    if self.training_strategy == "alternate":
+                        rnd = random.random()
+                        if rnd >= 0.66:  # TODO why use both?
+                            self.pg_step(sample, i, epoch_i, len(trainloader))
+                        elif rnd >= 0.33:
+                            self.seq_mle_step(sample, i, epoch_i, len(trainloader))
+                        else:
+                            self.mle_step(sample, i, epoch_i, len(trainloader))
+                    elif self.training_strategy == "mle":
+                        self.mle_step(sample, i, epoch_i, len(trainloader))
+                    elif self.training_strategy == "rl":
+                        self.pg_step(sample, i, epoch_i, len(trainloader))
+                    else:
+                        raise ValueError(f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
+                else:
+                    self.mle_step(sample, i, epoch_i, len(trainloader))
+                num_update += 1
+            else:
+                if i == 0:
+                    print("Pretraining discriminator for one epoch")
+
+            if hasattr(self, "discriminator"):
+                self.discriminator_step(sample, i, epoch_i, len(trainloader))
+
+        return num_update
