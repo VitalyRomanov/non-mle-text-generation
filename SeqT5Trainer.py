@@ -214,7 +214,7 @@ class SeqT5Gumbel(SeqT5RL):
         # MLE training
         print("MLE Training")
 
-        output = self.sequential_generation(sample, decoding_style="gumbel")
+        output = self.sequential_generation(sample, decoding_style="gumbel", top_k=1)
         loss = output["loss"]
         # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
 
