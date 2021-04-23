@@ -180,7 +180,7 @@ class SeqT5Gumbel(SeqT5RL):
         fake_sentence = gen_output["output_onehot"]
         src_sentence = gen_output["input_onehot"]
 
-        fake_labels = -Variable(torch.ones(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample[
+        fake_labels = Variable(torch.zeros(sample['target'].size(0)).float()).unsqueeze(1).repeat(1, sample[
             'target'].size(1))
         # fake_labels = Variable(torch.zeros(sample['target'].size(0)).float())
 
