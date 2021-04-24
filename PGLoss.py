@@ -16,7 +16,7 @@ class PGLoss(torch.nn.Module):
 
     def forward(self, logprobs, label, reward, use_cuda):
         bsz, seqlen, _ = logprobs.size()
-        # loss = 0
+
         logprobs = logprobs.clone()
 
         with torch.no_grad():
@@ -25,19 +25,8 @@ class PGLoss(torch.nn.Module):
 
         loss = -torch.sum(logprobs * reward.unsqueeze(2) * mask)
 
-        # for i in range(bsz):
-        #     trg_label = label[i,:]
-        #     row_idx = torch.LongTensor(range(seqlen))
-        #     if use_cuda:
-        #         row_idx = row_idx.cuda()
-        #     if self.ignore_index != None:
-        #         logprobs[:, :, self.ignore_index] = 0
-        #
-        #     loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i, :]))
-        #     # loss = loss + (-torch.sum(logprobs[i, :, :][row_idx, trg_label] * reward[i]))
-        
         if self.size_average:
-            loss = loss/bsz    
+            loss = loss/bsz
 
         
         return loss

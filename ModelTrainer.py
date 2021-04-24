@@ -199,28 +199,33 @@ class ModelTrainer:
     def pg_step(self, sample, batch_i, epoch, loader_len):
         print("Policy Gradient Training")
 
-        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)
+        self.g_optimizer.zero_grad()
+        assert self.args.policy_gradient_samples > 0
+        for _ in range(self.args.policy_gradient_samples):
+            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)
 
-        with torch.no_grad():
-            # if self.sequential_decoding_style == "gumbel":
-            #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
-            # else:
-            # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
-            reward = self.discriminator(output["prediction"], output["prediction"])
+            with torch.no_grad():
+                # if self.sequential_decoding_style == "gumbel":
+                #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
+                # else:
+                # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
+                reward = self.discriminator(output["prediction"], output["prediction"])
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
+            pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
+
+            pg_loss = pg_loss / self.args.policy_gradient_samples # normalize by the number of samples
+
+            pg_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
+        self.g_optimizer.step()
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
                 self.evaluate_generator(
                     sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
-                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train",
+                    strategy="rl"
                 )
-
-        self.g_optimizer.zero_grad()
-        pg_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
-        self.g_optimizer.step()
 
     def get_target_lens(self, target):
         target_lens = (torch.ones(target.size(0), dtype=torch.long) * target.size(1)).to(target.device)
@@ -249,10 +254,33 @@ class ModelTrainer:
 
         return self.wrap_for_output(sample, logits)
 
-    def mle_step(self, sample, batch_i, epoch, loader_len):
-        # MLE training
-        print("MLE Training")
+    def seq_mle_step(self, sample, batch_i, epoch, loader_len, seq_decode=False):
+        print("Seq MLE Training")
 
+        self.g_optimizer.zero_grad()
+        assert self.args.policy_gradient_samples > 0
+        for _ in range(self.args.policy_gradient_samples):
+            output = self.sequential_generation(sample, decoding_style="gumbel", top_p=0.9)
+
+            loss = output["loss"] / self.args.policy_gradient_samples
+            loss.backward()
+
+        with torch.no_grad():
+            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
+                )
+
+        # all-reduce grads and rescale by grad_denom
+        # for p in self.generator.parameters():
+        #     if p.requires_grad:
+        #         p.grad.data.div_(sample_size)
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
+        self.g_optimizer.step()
+
+    def mle_step(self, sample, batch_i, epoch, loader_len):
+        print("MLE Training")
         output = self.teacher_forcing_generation(sample)
         loss = output["loss"]
         # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
@@ -337,7 +365,6 @@ class ModelTrainer:
         sample["target"] = sample["target"][:, :max_trg_len].contiguous()
         return sample
 
-
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
 
@@ -351,15 +378,19 @@ class ModelTrainer:
                 if hasattr(self, "discriminator"):
                     if self.training_strategy == "alternate":
                         if random.random() >= 0.5:  # TODO why use both?
-                            self.pg_step(sample, i, epoch_i, len(trainloader))
-                        else:
                             self.mle_step(sample, i, epoch_i, len(trainloader))
+                        else:
+                            if random.random() > 0.5:
+                                self.seq_mle_step(sample, i, epoch_i, len(trainloader))
+                            else:
+                                self.pg_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "mle":
                         self.mle_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "rl":
                         self.pg_step(sample, i, epoch_i, len(trainloader))
                     else:
-                        raise ValueError(f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
+                        raise ValueError(
+                            f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
                 else:
                     self.mle_step(sample, i, epoch_i, len(trainloader))
                 num_update += 1
