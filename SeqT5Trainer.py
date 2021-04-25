@@ -131,67 +131,6 @@ class SeqT5RL(SeqT5Trainer):
         self.training_strategy = "alternate"  # alternate | mle | rl
         self.sequential_decoding_style = "rl"
 
-    def seq_mle_step(self, sample, batch_i, epoch, loader_len):
-        # MLE training
-        print("Seq MLE Training")
-
-        output = self.sequential_generation(sample, decoding_style="gumbel", top_k=1)
-        loss = output["loss"]
-        # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-
-        with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
-                self.evaluate_generator(
-                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
-                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
-                )
-
-        self.g_optimizer.zero_grad()
-        loss.backward()
-        # all-reduce grads and rescale by grad_denom
-        # for p in self.generator.parameters():
-        #     if p.requires_grad:
-        #         p.grad.data.div_(sample_size)
-        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
-        self.g_optimizer.step()
-
-    def train_loop(self, trainloader, epoch_i, num_update):
-        for i, sample in enumerate(trainloader):
-
-            sample = self.format_sample(sample)
-
-            if self.use_cuda:
-                # wrap input tensors in cuda tensors
-                sample = utils.make_variable(sample, cuda=cuda)
-
-            if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
-                if hasattr(self, "discriminator"):
-                    if self.training_strategy == "alternate":
-                        if random.random() >= 0.5:  # TODO why use both?
-                            self.mle_step(sample, i, epoch_i, len(trainloader))
-                        else:
-                            if random.random() > 0.5:
-                                self.seq_mle_step(sample, i, epoch_i, len(trainloader))
-                            else:
-                                self.pg_step(sample, i, epoch_i, len(trainloader))
-                    elif self.training_strategy == "mle":
-                        self.mle_step(sample, i, epoch_i, len(trainloader))
-                    elif self.training_strategy == "rl":
-                        self.pg_step(sample, i, epoch_i, len(trainloader))
-                    else:
-                        raise ValueError(f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
-                else:
-                    self.mle_step(sample, i, epoch_i, len(trainloader))
-                num_update += 1
-            else:
-                if i == 0:
-                    print("Pretraining discriminator for one epoch")
-
-            if hasattr(self, "discriminator"):
-                self.discriminator_step(sample, i, epoch_i, len(trainloader))
-
-        return num_update
-
 
 class SeqT5Gumbel(SeqT5RL):
     def __init__(self, *args, **kwargs):
@@ -263,75 +202,14 @@ class SeqT5Gumbel(SeqT5RL):
     #     acc = torch.sum(torch.round(disc_out) == labels).float() / torch.numel(labels) * 100
     #     return d_loss, acc
 
-    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.6, temp=.2):
-        t5out = self.generator(
-            self.transform_for_t5(sample['net_input']['src_tokens']),
-            labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
-            temperature=temp, epsilon=self.args.imp_smpl_epsilon
-        )
-
-        return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
+    # def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.6, temp=.2):
+    #     t5out = self.generator(
+    #         self.transform_for_t5(sample['net_input']['src_tokens']),
+    #         labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
+    #         temperature=temp, epsilon=self.args.imp_smpl_epsilon
+    #     )
+    #
+    #     return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
 
     # def handicap_discriminator(self):
     #     pass
-
-    def seq_mle_step(self, sample, batch_i, epoch, loader_len):
-        # MLE training
-        print("Seq MLE Training")
-
-        output = self.sequential_generation(sample, decoding_style="gumbel", top_k=1)
-        loss = output["loss"]
-        # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
-
-        with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
-                self.evaluate_generator(
-                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
-                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
-                )
-
-        self.g_optimizer.zero_grad()
-        loss.backward()
-        # all-reduce grads and rescale by grad_denom
-        # for p in self.generator.parameters():
-        #     if p.requires_grad:
-        #         p.grad.data.div_(sample_size)
-        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
-        self.g_optimizer.step()
-
-    def train_loop(self, trainloader, epoch_i, num_update):
-        for i, sample in enumerate(trainloader):
-
-            sample = self.format_sample(sample)
-
-            if self.use_cuda:
-                # wrap input tensors in cuda tensors
-                sample = utils.make_variable(sample, cuda=cuda)
-
-            if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
-                if hasattr(self, "discriminator"):
-                    if self.training_strategy == "alternate":
-                        if random.random() >= 0.5:  # TODO why use both?
-                            self.mle_step(sample, i, epoch_i, len(trainloader))
-                        else:
-                            if random.random() > 0.5:
-                                self.seq_mle_step(sample, i, epoch_i, len(trainloader))
-                            else:
-                                self.pg_step(sample, i, epoch_i, len(trainloader))
-                    elif self.training_strategy == "mle":
-                        self.mle_step(sample, i, epoch_i, len(trainloader))
-                    elif self.training_strategy == "rl":
-                        self.pg_step(sample, i, epoch_i, len(trainloader))
-                    else:
-                        raise ValueError(f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
-                else:
-                    self.mle_step(sample, i, epoch_i, len(trainloader))
-                num_update += 1
-            else:
-                if i == 0:
-                    print("Pretraining discriminator for one epoch")
-
-            if hasattr(self, "discriminator"):
-                self.discriminator_step(sample, i, epoch_i, len(trainloader))
-
-        return num_update

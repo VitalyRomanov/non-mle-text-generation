@@ -199,7 +199,7 @@ class ModelTrainer:
     def pg_step(self, sample, batch_i, epoch, loader_len):
         print("Policy Gradient Training")
 
-        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)
+        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1)
 
         with torch.no_grad():
             # if self.sequential_decoding_style == "gumbel":
@@ -249,11 +249,15 @@ class ModelTrainer:
 
         return self.wrap_for_output(sample, logits)
 
-    def mle_step(self, sample, batch_i, epoch, loader_len):
-        # MLE training
-        print("MLE Training")
+    def mle_step(self, sample, batch_i, epoch, loader_len, seq_decoding=False):
 
-        output = self.teacher_forcing_generation(sample)
+        if seq_decoding:
+            print("Seq MLE Training")
+            output = self.sequential_generation(sample, decoding_style="gumbel", top_k=1)
+        else:
+            print("MLE Training")
+            output = self.teacher_forcing_generation(sample)
+
         loss = output["loss"]
         # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
 
@@ -287,7 +291,7 @@ class ModelTrainer:
             true_labels = true_labels.cuda()
 
         with torch.no_grad():
-            gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style)  # 64 X 50 X 6632
+            gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1)  # 64 X 50 X 6632
 
         # if self.sequential_decoding_style == "gumbel":
         #     true_sentence = gen_output["target_onehot"]
@@ -337,7 +341,6 @@ class ModelTrainer:
         sample["target"] = sample["target"][:, :max_trg_len].contiguous()
         return sample
 
-
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
 
@@ -351,21 +354,25 @@ class ModelTrainer:
                 if hasattr(self, "discriminator"):
                     if self.training_strategy == "alternate":
                         if random.random() >= 0.5:  # TODO why use both?
-                            self.pg_step(sample, i, epoch_i, len(trainloader))
-                        else:
                             self.mle_step(sample, i, epoch_i, len(trainloader))
+                        else:
+                            if random.random() > 0.5:
+                                self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
+                            else:
+                                self.pg_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "mle":
                         self.mle_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "rl":
                         self.pg_step(sample, i, epoch_i, len(trainloader))
                     else:
-                        raise ValueError(f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
+                        raise ValueError(
+                            f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
                 else:
                     self.mle_step(sample, i, epoch_i, len(trainloader))
                 num_update += 1
             else:
-                if i == 0:
-                    print("Pretraining discriminator for one epoch")
+                if i == 0 and epoch_i == 1:
+                    print(f"Pretraining discriminator for {self.args.d_pretraining} epochs")
 
             if hasattr(self, "discriminator"):
                 self.discriminator_step(sample, i, epoch_i, len(trainloader))
@@ -462,9 +469,6 @@ class ModelTrainer:
 
             sample = self.format_sample(sample, extra_tokens=50)
 
-            if i > len(valloader):
-                print("Batch overflow")
-
             with torch.no_grad():
                 if self.use_cuda:
                     # wrap input tensors in cuda tensors
@@ -527,7 +531,7 @@ class ModelTrainer:
             self.generator.train()
             if hasattr(self, "discriminator"):
                 self.discriminator.train()
-            update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
+            # update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
 
             print(f"Training batches: {len(trainloader)}")
 
