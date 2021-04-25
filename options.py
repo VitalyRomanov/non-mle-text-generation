@@ -126,8 +126,6 @@ def add_generator_model_args(parser):
                         help='dropout probability')
     parser.add_argument('--bidirectional', default=False, type=bool,  # TODO not sure how this works
                        help='unidirectional or bidirectional encoder')
-    parser.add_argument('--policy_gradient_samples', default=5, type=int,
-                        help='Samples to take when estimating gradients')
     return parser
 
 def add_discriminator_model_args(parser):
