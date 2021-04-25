@@ -211,7 +211,7 @@ class ModelTrainer:
                 # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
                 reward = self.discriminator(output["prediction"], output["prediction"])
 
-            pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - 0.5, self.use_cuda)
+            pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, self.use_cuda)
 
             pg_loss = pg_loss / self.args.policy_gradient_samples # normalize by the number of samples
 
