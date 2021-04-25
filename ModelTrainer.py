@@ -208,7 +208,7 @@ class ModelTrainer:
             # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
             reward = self.discriminator(output["prediction"], output["prediction"])
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward - torch.mean(reward), self.use_cuda)
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, self.use_cuda)
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
