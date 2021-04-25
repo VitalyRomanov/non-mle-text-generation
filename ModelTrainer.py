@@ -372,7 +372,7 @@ class ModelTrainer:
                 num_update += 1
             else:
                 if i == 0 and epoch_i == 1:
-                    print(f"Pretraining discriminator for {self.args.d_pretraining} epochs")
+                    print(f"Pretraining discriminator for {self.args.discriminator_pretraining} epochs")
 
             if hasattr(self, "discriminator"):
                 self.discriminator_step(sample, i, epoch_i, len(trainloader))
