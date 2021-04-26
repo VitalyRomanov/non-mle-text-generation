@@ -350,7 +350,10 @@ class ModelTrainer:
                 # wrap input tensors in cuda tensors
                 sample = utils.make_variable(sample, cuda=cuda)
 
-            mle_frac = max(self.args.epochs - epoch_i, 1) / self.args.epochs
+            if self.args.reduce_tf_frac:
+                mle_frac = max(self.args.epochs - epoch_i, 1) / self.args.epochs
+            else:
+                mle_frac = 0.5
 
             if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
                 if hasattr(self, "discriminator"):

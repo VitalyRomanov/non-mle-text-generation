@@ -126,6 +126,8 @@ def add_generator_model_args(parser):
                         help='dropout probability')
     parser.add_argument('--bidirectional', default=False, type=bool,  # TODO not sure how this works
                        help='unidirectional or bidirectional encoder')
+    parser.add_argument('--reduce_tf_frac', default=False, type=bool,  # TODO not sure how this works
+                        help='reduce the proportion of teacher forcing with each epoch during training')
     return parser
 
 def add_discriminator_model_args(parser):
