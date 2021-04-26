@@ -350,10 +350,12 @@ class ModelTrainer:
                 # wrap input tensors in cuda tensors
                 sample = utils.make_variable(sample, cuda=cuda)
 
+            mle_frac = max(self.args.epochs - epoch_i, 1) / self.args.epochs
+
             if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
                 if hasattr(self, "discriminator"):
                     if self.training_strategy == "alternate":
-                        if random.random() >= 0.5:  # TODO why use both?
+                        if random.random() >= mle_frac:  # TODO why use both?
                             self.mle_step(sample, i, epoch_i, len(trainloader))
                         else:
                             if random.random() > 0.5:
