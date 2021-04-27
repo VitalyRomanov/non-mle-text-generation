@@ -652,6 +652,7 @@ class SeqT5(T5ForConditionalGeneration):
         Decode with top p gradual sampling for RL objective
         """
         decoder_inputs_embeds = None
+        output_logits = []
         batch_size, seq_len = decoder_input_ids.shape[:2]
         for tok_ind in range(seq_len):
             if tok_ind == 0:
@@ -695,6 +696,7 @@ class SeqT5(T5ForConditionalGeneration):
             )
 
             next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
+            output_logits.append(lm_logits[:, -1, :].unsqueeze(1))
 
         with torch.no_grad():
             decoder_outputs = self.decoder(
@@ -712,7 +714,7 @@ class SeqT5(T5ForConditionalGeneration):
                 return_dict=return_dict,
             )
 
-        return decoder_outputs, lm_logits
+        return decoder_outputs, torch.cat(output_logits, dim=1)
 
     def forward(
         self,

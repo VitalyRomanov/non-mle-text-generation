@@ -130,7 +130,7 @@ def test_T5(args):
             input_ids = entry["source"] - 1
             labels = entry["target"] - 1
 
-            outputs = model.generate(input_ids.reshape(1,-1), **g_params)[0]
+            outputs = model.generate(input_ids.reshape(1,-1), **g_params)[0][1:]
 
             print("s: ", tokenizer.decode(input_ids))
             print("t: ", tokenizer.decode(labels))
@@ -157,17 +157,17 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_path", default='checkpoint/SeqT5Mle_t5_mle')
     parser.add_argument("--data_path", default=None)
     parser.add_argument("--use_test", action='store_true')
-    parser.add_argument("--t", default=1.)
-    parser.add_argument("--top_p", default=0.9)
-    parser.add_argument("--top_k", default=50)
+    parser.add_argument("--t", default=1., type=float)
+    parser.add_argument("--top_p", default=0.9, type=float)
+    parser.add_argument("--top_k", default=50, type=int)
     parser.add_argument("--do_sample", default=True, type=bool)
-    parser.add_argument("--max_length", default=100)
-    parser.add_argument("--repetition_penalty", default=1.)
-    parser.add_argument("--num_beams", default=1)
-    parser.add_argument("--length_penalty", default=1)
-    parser.add_argument("--no_repeat_ngram_size", default=0)
-    parser.add_argument("--num_beam_groups", default=1)
-    parser.add_argument("--diversity_penalty", default=0)
+    parser.add_argument("--max_length", default=100, type=int)
+    parser.add_argument("--repetition_penalty", default=1., type=float)
+    parser.add_argument("--num_beams", default=1, type=int)
+    parser.add_argument("--length_penalty", default=1, type=int)
+    parser.add_argument("--no_repeat_ngram_size", default=0, type=int)
+    parser.add_argument("--num_beam_groups", default=1, type=int)
+    parser.add_argument("--diversity_penalty", default=0, type=int)
     parser.add_argument("--use_parameter_grid", action='store_true')
 
     args = parser.parse_args()

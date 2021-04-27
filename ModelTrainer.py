@@ -253,7 +253,7 @@ class ModelTrainer:
 
         if seq_decoding:
             print("Seq MLE Training")
-            output = self.sequential_generation(sample, decoding_style="gumbel", top_k=1)
+            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1)
         else:
             print("MLE Training")
             output = self.teacher_forcing_generation(sample)
