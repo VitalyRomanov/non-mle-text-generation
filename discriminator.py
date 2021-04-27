@@ -108,7 +108,8 @@ class AttDiscriminator(nn.Module):
         self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
         self.decoder_layer = nn.TransformerDecoderLayer(emb_dim, num_heads, dim_feedforward=emb_dim)
         self.decoder = nn.TransformerDecoder(self.decoder_layer, num_layers=layers)
-        self.mask = self.generate_square_subsequent_mask(1)
+        self.target_mask = self.generate_square_subsequent_mask(1)
+        self.memory_mask = self.generate_square_subsequent_mask(1)
 
         self.fc = nn.Linear(emb_dim, 1)
 
@@ -120,9 +121,11 @@ class AttDiscriminator(nn.Module):
     def do_stuff(self, source_ids, target_ids, dummy=None):
         source_emb = self.embed_src_tokens(source_ids).permute(1, 0, 2)
         target_emb = self.embed_trg_tokens(target_ids).permute(1, 0, 2)
-        if self.mask.size(0) != target_emb.size(0):
-            self.mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
-        out = self.decoder(target_emb, source_emb, tgt_mask=self.mask)
+        if self.target_mask.size(0) != target_emb.size(0):
+            self.target_mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
+        if self.memory_mask.size(0) != source_emb.size(0):
+            self.memory_mask = self.generate_square_subsequent_mask(source_emb.size(0)).to(source_ids.device)
+        out = self.decoder(target_emb, source_emb, tgt_mask=self.target_mask, memory_mask=self.memory_mask)
 
         out = self.fc(out)
 
