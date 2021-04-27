@@ -99,7 +99,7 @@ def test_T5(args):
     import data
 
     tokenizer = T5Tokenizer.from_pretrained('t5-small')
-    model = SeqT5.from_pretrained(os.path.join(args.checkp_path, "best_gmodel.pt"))
+    model = SeqT5.from_pretrained(os.path.join(args.ckpt_path, "best_gmodel.pt")).cpu()
 
     splits = ['test', 'valid']
     dataset = data.load_dataset(args.data_path, splits)
@@ -154,7 +154,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # Load args
-    parser.add_argument("--checkp_path", default='checkpoint/SeqT5Mle_t5_mle')
+    parser.add_argument("--ckpt_path", default='checkpoint/SeqT5Mle_t5_mle')
     parser.add_argument("--data_path", default=None)
     parser.add_argument("--use_test", action='store_true')
     parser.add_argument("--t", default=1.)
