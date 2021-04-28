@@ -56,9 +56,9 @@ def add_optimization_args(parser):
                         help="Epochs through the data. (default=12)")
     parser.add_argument("--optimizer", default="Adam", choices=["SGD", "Adadelta", "Adam"],  # TODO modify include other optimizers
                         help="Optimizer of choice for training. (default=Adam)")
-    parser.add_argument("--g_optimizer", default="Adam", choices=["SGD", "Adadelta", "Adam"],  # TODO modify
+    parser.add_argument("--g_optimizer", default="AdamW", choices=["SGD", "Adadelta", "Adam"],  # TODO modify
                         help="Optimizer of choice for training. (default=Adam)")
-    parser.add_argument("--d_optimizer", default="SGD", choices=["SGD", "Adadelta", "Adam"],  # TODO modify
+    parser.add_argument("--d_optimizer", default="AdamW", choices=["SGD", "Adadelta", "Adam"],  # TODO modify
                         help="Optimizer of choice for training. (default=Adam)")
     parser.add_argument("--learning_rate", "-lr", default=1e-3, type=float,
                         help="Learning rate of the optimization. (default=0.1)")
