@@ -121,8 +121,8 @@ class SeqT5Mle(SeqT5Trainer):
         self.training_strategy = "mle"  # alternate | mle | rl
         self.sequential_decoding_style = "rl"
 
-    def create_discriminator(self, args):
-        pass
+    # def create_discriminator(self, args):
+    #     pass
 
 
 class SeqT5RL(SeqT5Trainer):
