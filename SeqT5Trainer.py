@@ -91,7 +91,7 @@ class SeqT5Trainer(ModelTrainer):
 
     def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.6, temp=.2):
         t5out = self.generator(
-            self.transform_for_t5(sample['net_input']['src_tokens']),
+            self.transform_for_t5(sample['net_input']['src_tokens']), attention_mask=sample["attention_mask"],
             labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
             temperature=temp, epsilon=self.args.imp_smpl_epsilon
         )
@@ -102,7 +102,7 @@ class SeqT5Trainer(ModelTrainer):
 
     def teacher_forcing_generation(self, sample):
         logits = self.generator(
-            self.transform_for_t5(sample['net_input']['src_tokens']),
+            self.transform_for_t5(sample['net_input']['src_tokens']), attention_mask=sample["attention_mask"],
             labels=self.transform_for_t5(sample['target']), decoding_style="tf"
         ).logits
 
@@ -204,7 +204,7 @@ class SeqT5Gumbel(SeqT5RL):
 
     # def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.6, temp=.2):
     #     t5out = self.generator(
-    #         self.transform_for_t5(sample['net_input']['src_tokens']),
+    #         self.transform_for_t5(sample['net_input']['src_tokens']), attention_mask=sample["attention_mask"],
     #         labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
     #         temperature=temp, epsilon=self.args.imp_smpl_epsilon
     #     )

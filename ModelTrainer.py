@@ -182,9 +182,9 @@ class ModelTrainer:
         if hasattr(self, "discriminator"):
             self.d_optimizer = eval("torch.optim." + args.d_optimizer)(filter(lambda x: x.requires_grad,
                                                                          self.discriminator.parameters()),
-                                                                  args.d_learning_rate,
-                                                                  momentum=args.momentum,
-                                                                  nesterov=True)
+                                                                  args.d_learning_rate,)
+                                                                  # momentum=args.momentum,
+                                                                  # nesterov=True)
 
     def write_summary(self, scores, batch_step):
         # main_name = os.path.basename(self.model_base_path)
@@ -228,8 +228,9 @@ class ModelTrainer:
         target_lens[eos_idx[:, 0]] = eos_idx[:, 1] + 1
         return target_lens
 
-    def get_length_mask(self, target):
-        lens = self.get_target_lens(target)
+    def get_length_mask(self, target, lens=None):
+        if lens is None:
+            lens = self.get_target_lens(target)
         mask = torch.arange(target.size(1)).to(target.device)[None, :] < lens[:, None]
         return mask
 
@@ -334,11 +335,12 @@ class ModelTrainer:
     def format_sample(self, sample, extra_tokens=10):
         sample = copy(sample)
 
-        max_src_len = min(sample["net_input"]['src_tokens'].size(1), max(sample["net_input"]['src_lengths'].tolist()) + extra_tokens)
-        max_trg_len = min(sample["target"].size(1), max(sample["target_lengths"].tolist()) + extra_tokens)
+        max_src_len = min(sample["net_input"]['src_tokens'].size(1), max(sample["net_input"]['src_lengths'].tolist()))
+        max_trg_len = min(sample["target"].size(1), max(sample["target_lengths"].tolist()))
 
         sample["net_input"]['src_tokens'] = sample["net_input"]['src_tokens'][:, :max_src_len].contiguous()
         sample["target"] = sample["target"][:, :max_trg_len].contiguous()
+        sample["attention_mask"] = self.get_length_mask(sample["net_input"]["src_tokens"], sample["net_input"]['src_lengths'])
         return sample
 
     def train_loop(self, trainloader, epoch_i, num_update):
