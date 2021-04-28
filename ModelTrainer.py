@@ -211,7 +211,7 @@ class ModelTrainer:
         pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, self.use_cuda)
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
+            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
                 self.evaluate_generator(
                     sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
@@ -263,7 +263,7 @@ class ModelTrainer:
         # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
+            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
                 self.evaluate_generator(
                     sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
@@ -323,7 +323,7 @@ class ModelTrainer:
         d_loss, acc = self.discrimnator_loss_acc(sample)
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 1 == 0:
+            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
                 self.evaluate_discriminator(
                     d_loss, acc, batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train"
                 )
