@@ -799,6 +799,7 @@ class SeqT5(T5ForConditionalGeneration):
         if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
             # get decoder inputs from shifting lm labels to the right
             decoder_input_ids = self._shift_right(labels)
+            decoder_input_ids[:, 0] = 0
 
         # If decoding with past key value states, only the last tokens
         # should be given as an input
