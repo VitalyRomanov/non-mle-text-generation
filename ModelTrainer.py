@@ -576,7 +576,7 @@ class ModelTrainer:
                 descending=True,  # largest batch first to warm the caching allocator
                 shard_id=args.distributed_rank,
                 num_shards=args.distributed_world_size,
-                seed=args.seed,
+                seed=args.seed, # keep this constant
                 sample_without_replacement=args.sample_val_without_replacement
             )
 
