@@ -85,11 +85,11 @@ def add_optimization_args(parser):
     parser.add_argument('--curriculum', default=0, type=int, metavar='N',  # TODO check impact
                        help='sort batches by source length for first N epochs')
     parser.add_argument('--sample-without-replacement', default=0, type=int, metavar='N',
-                       help='If bigger than 0, use that number of mini-batches for each epoch,'  # TODO understand whether this is same as rehearsal 
+                       help='If bigger than 0, use that number of mini-batches for each epoch,'  
                             ' where each sample is drawn randomly without replacement from the'
                             ' dataset')
     parser.add_argument('--sample-val-without-replacement', default=0, type=int, metavar='N',
-                        help='If bigger than 0, use that number of mini-batches for each evaluation epoch,'  # TODO understand whether this is same as rehearsal 
+                        help='If bigger than 0, use that number of mini-batches for each evaluation epoch,' 
                              ' where each sample is drawn randomly without replacement from the'
                              ' dataset')
     parser.add_argument('--sentence-avg', action='store_true',  # TODO check impact

@@ -397,18 +397,32 @@ class ModelTrainer:
             sentences.append(decoded)
         return sentences
 
-    def compute_bleu(self, predictions, references):
-        bleu = self.bleu_metric.compute(
+    def compute_bleu(self, predictions, references, accumulate=False):
+        self.bleu_metric.add_batch(
             predictions=self.decode_sentences(predictions),
             references=self.decode_sentences(references, for_referece=True)
         )
+        if not accumulate:
+            bleu = self.bleu_metric.compute(
+                predictions=self.decode_sentences(predictions),
+                references=self.decode_sentences(references, for_referece=True)
+            )
+        else:
+            bleu = None
         return bleu
 
-    def compute_rouge(self, predictions, references):
-        rouge = self.rouge_metric.compute(
+    def compute_rouge(self, predictions, references, accumulate=False):
+        self.rouge_metric.add_batch(
             predictions=self.decode_sentences(predictions),
             references=self.decode_sentences(references)
         )
+        if not accumulate:
+            rouge = self.rouge_metric.compute(
+                predictions=self.decode_sentences(predictions),
+                references=self.decode_sentences(references)
+            )
+        else:
+            rouge = None
         return rouge
 
     def token_accuracy(self, predictions, targets, target_mask):
@@ -419,7 +433,7 @@ class ModelTrainer:
 
     def evaluate_generator(
             self, original, predictions, targets, target_mask, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
-            strategy=None
+            strategy=None, accumulate=False
     ):
 
         assert partition in {"train", "valid", "test"}
@@ -428,8 +442,8 @@ class ModelTrainer:
         sample_size = targets.size(0) if self.args.sentence_avg else ntokens
 
         gen_acc = self.token_accuracy(predictions, targets, target_mask)
-        bleu = self.compute_bleu(predictions, targets)
-        rouge = self.compute_rouge(predictions, original)
+        bleu = self.compute_bleu(predictions, targets, accumulate=accumulate)
+        rouge = self.compute_rouge(predictions, original, accumulate=accumulate)
 
         self.g_logging_meters[f'{partition}_loss'].update(loss, sample_size)
         self.g_logging_meters[f'{partition}_acc'].update(gen_acc)
@@ -438,21 +452,23 @@ class ModelTrainer:
 
         logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
                       f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
-        self.write_summary({
-            f"Loss/{partition}/{strategy}/gen": loss,
-            f"Accuracy/{partition}/gen": gen_acc,
-            f"bleu/{partition}/score": bleu["score"],
-            f"bleu/{partition}/P1": bleu["precisions"][0],
-            f"bleu/{partition}/P2": bleu["precisions"][1],
-            f"bleu/{partition}/P3": bleu["precisions"][2],
-            f"bleu/{partition}/P4": bleu["precisions"][3],
-            f"rouge/{partition}/rouge1/high/f1": rouge["rouge1"].high.fmeasure,
-            f"rouge/{partition}/rouge2/high/f1": rouge["rouge2"].high.fmeasure,
-            f"rouge/{partition}/rougeL/high/f1": rouge["rougeL"].high.fmeasure,
-            f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision,
-            f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision,
-            f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision,
-        }, batch_i + (epoch_i - 1) * num_batches)
+
+        if not accumulate:
+            self.write_summary({
+                f"Loss/{partition}/{strategy}/gen": loss,
+                f"Accuracy/{partition}/gen": gen_acc,
+                f"bleu/{partition}/score": bleu["score"],
+                f"bleu/{partition}/P1": bleu["precisions"][0],
+                f"bleu/{partition}/P2": bleu["precisions"][1],
+                f"bleu/{partition}/P3": bleu["precisions"][2],
+                f"bleu/{partition}/P4": bleu["precisions"][3],
+                f"rouge/{partition}/rouge1/high/f1": rouge["rouge1"].high.fmeasure,
+                f"rouge/{partition}/rouge2/high/f1": rouge["rouge2"].high.fmeasure,
+                f"rouge/{partition}/rougeL/high/f1": rouge["rougeL"].high.fmeasure,
+                f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision,
+                f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision,
+                f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision,
+            }, batch_i + (epoch_i - 1) * num_batches)
 
     def evaluate_discriminator(self, d_loss, d_acc, batch_i, epoch_i, num_batches, partition=None):
 
@@ -486,7 +502,7 @@ class ModelTrainer:
                     output = self.eval_generation(sample)
                     self.evaluate_generator(
                         sample["net_input"]["src_tokens"], output["prediction"], output["target"], output["mask"], output["loss"], ntokens=sample["ntokens"],
-                        batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle"
+                        batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle", accumulate=i<len(valloader)-1
                     )
 
                 # discriminator validation
@@ -560,7 +576,7 @@ class ModelTrainer:
                 descending=True,  # largest batch first to warm the caching allocator
                 shard_id=args.distributed_rank,
                 num_shards=args.distributed_world_size,
-                seed=seed,
+                seed=args.seed,
                 sample_without_replacement=args.sample_val_without_replacement
             )
 
