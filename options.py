@@ -95,6 +95,8 @@ def add_optimization_args(parser):
     parser.add_argument('--sentence-avg', action='store_true',  # TODO check impact
                        help='normalize gradients by the number of sentences in a batch'
                             ' (default is to normalize by number of tokens)')
+    parser.add_argument('--grad_accumulation', default=1, type=int,
+                        help="Update gradients every N steps, do gradient accumulation in-between")
 
     return parser
 

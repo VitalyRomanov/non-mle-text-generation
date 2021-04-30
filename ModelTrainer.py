@@ -208,7 +208,7 @@ class ModelTrainer:
             # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
             reward = self.discriminator(output["prediction"], output["prediction"])
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, self.use_cuda)
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, self.use_cuda) / self.args.grad_accumulation
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
@@ -217,10 +217,10 @@ class ModelTrainer:
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
                 )
 
-        self.g_optimizer.zero_grad()
+        # self.g_optimizer.zero_grad()
         pg_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
-        self.g_optimizer.step()
+        # self.g_optimizer.step()
 
     def get_target_lens(self, target):
         target_lens = (torch.ones(target.size(0), dtype=torch.long) * target.size(1)).to(target.device)
@@ -259,7 +259,7 @@ class ModelTrainer:
             print("MLE Training")
             output = self.teacher_forcing_generation(sample)
 
-        loss = output["loss"]
+        loss = output["loss"] / self.args.grad_accumulation
         # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
 
         with torch.no_grad():
@@ -269,14 +269,14 @@ class ModelTrainer:
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
                 )
 
-        self.g_optimizer.zero_grad()
+        # self.g_optimizer.zero_grad()
         loss.backward()
         # all-reduce grads and rescale by grad_denom
         # for p in self.generator.parameters():
         #     if p.requires_grad:
         #         p.grad.data.div_(sample_size)
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
-        self.g_optimizer.step()
+        # self.g_optimizer.step()
 
     def discrimnator_loss_acc(self, sample):
         bsz = sample['target'].size(0)  # batch_size = 64
@@ -383,6 +383,12 @@ class ModelTrainer:
 
             if hasattr(self, "discriminator"):
                 self.discriminator_step(sample, i, epoch_i, len(trainloader))
+
+            if i % self.args.grad_accumulation == 0:
+                self.g_optimizer.step()
+                self.g_optimizer.zero_grad()
+                self.d_optimizer.step()
+                self.d_optimizer.zero_grad()
 
         return num_update
 
