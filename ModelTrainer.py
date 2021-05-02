@@ -344,6 +344,12 @@ class ModelTrainer:
         return sample
 
     def train_loop(self, trainloader, epoch_i, num_update):
+        self.d_optimizer.zero_grad()
+        self.g_optimizer.zero_grad()
+
+        g_stepped = False
+        d_stepped = False
+
         for i, sample in enumerate(trainloader):
 
             sample = self.format_sample(sample)
@@ -377,18 +383,24 @@ class ModelTrainer:
                 else:
                     self.mle_step(sample, i, epoch_i, len(trainloader))
                 num_update += 1
+                g_stepped = True
             else:
                 if i == 0 and epoch_i == 1:
                     print(f"Pretraining discriminator for {self.args.discriminator_pretraining} epochs")
 
             if hasattr(self, "discriminator"):
                 self.discriminator_step(sample, i, epoch_i, len(trainloader))
+                d_stepped = True
 
             if i % self.args.grad_accumulation == 0:
-                self.g_optimizer.step()
-                self.g_optimizer.zero_grad()
-                self.d_optimizer.step()
-                self.d_optimizer.zero_grad()
+                if g_stepped:
+                    self.g_optimizer.step()
+                    self.g_optimizer.zero_grad()
+                    g_stepped = False
+                if d_stepped:
+                    self.d_optimizer.step()
+                    self.d_optimizer.zero_grad()
+                    d_stepped = False
 
         return num_update
 
