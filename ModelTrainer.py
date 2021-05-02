@@ -186,11 +186,15 @@ class ModelTrainer:
                                                                   # momentum=args.momentum,
                                                                   # nesterov=True)
 
-    def write_summary(self, scores, batch_step):
+    def write_summary(self, scores, batch_step, write_sents=False):
         # main_name = os.path.basename(self.model_base_path)
         for var, val in scores.items():
             # self.summary_writer.add_scalar(f"{main_name}/{var}", val, batch_step)
             self.summary_writer.add_scalar(var, val, batch_step)
+        if write_sents:
+            if len(self.last_sents) == self.args.gen_sents_in_tb:
+                for ind, sent in enumerate(self.last_sents):
+                    self.summary_writer.add_text(f"gen/{ind}", sent, global_step=batch_step)
         # self.summary_writer.add_scalars(main_name, scores, batch_step)
 
     def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.9, temp=1.):
@@ -451,7 +455,7 @@ class ModelTrainer:
 
     def evaluate_generator(
             self, original, predictions, targets, target_mask, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
-            strategy=None, accumulate=False
+            strategy=None, accumulate=False, write_sents=False
     ):
 
         assert partition in {"train", "valid", "test"}
@@ -471,6 +475,13 @@ class ModelTrainer:
         logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
                       f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
 
+        if not hasattr(self, "last_sents"):
+            self.last_sents = []
+        for sent in self.decode_sentences(predictions):
+            if len(self.last_sents) >= self.args.gen_sents_in_tb:
+                self.last_sents.pop(0)
+            self.last_sents.append(sent)
+
         if not accumulate:
             self.write_summary({
                 f"Loss/{partition}/{strategy}/gen": loss,
@@ -486,7 +497,7 @@ class ModelTrainer:
                 f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision,
                 f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision,
                 f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision,
-            }, batch_i + (epoch_i - 1) * num_batches)
+            }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents)
 
     def evaluate_discriminator(self, d_loss, d_acc, batch_i, epoch_i, num_batches, partition=None):
 
@@ -520,7 +531,7 @@ class ModelTrainer:
                     output = self.eval_generation(sample)
                     self.evaluate_generator(
                         sample["net_input"]["src_tokens"], output["prediction"], output["target"], output["mask"], output["loss"], ntokens=sample["ntokens"],
-                        batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle", accumulate=i<len(valloader)-1
+                        batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle", accumulate=i<len(valloader)-1, write_sents=True
                     )
 
                 # discriminator validation

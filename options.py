@@ -97,6 +97,8 @@ def add_optimization_args(parser):
                             ' (default is to normalize by number of tokens)')
     parser.add_argument('--grad_accumulation', default=1, type=int,
                         help="Update gradients every N steps, do gradient accumulation in-between")
+    parser.add_argument('--gen_sents_in_tb', "-gtb", dest="gen_sents_in_tb", default=10, type=int,
+                        help="Number of sentences to write to tensorboard")
 
     return parser
 
