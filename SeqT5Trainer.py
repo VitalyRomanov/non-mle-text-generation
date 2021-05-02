@@ -25,6 +25,8 @@ class SeqT5Trainer(ModelTrainer):
 
         self.t5_tokenizer = T5Tokenizer.from_pretrained('t5-small')
         self.generator = SeqT5.from_pretrained('t5-small')
+        if self.args.freeze_encoder:
+            self.generator.encoder.requires_grad = False
 
     def create_discriminator(self, args):
         # raise NotImplementedError()

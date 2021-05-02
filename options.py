@@ -128,10 +128,12 @@ def add_generator_model_args(parser):
                        help='dropout probability for decoder output')
     parser.add_argument('--dropout', default=0.1, type=float, metavar='D',
                         help='dropout probability')
-    parser.add_argument('--bidirectional', default=False, type=bool,  # TODO not sure how this works
+    parser.add_argument('--bidirectional', action='store_true', default=False, type=bool,  # TODO not sure how this works
                        help='unidirectional or bidirectional encoder')
-    parser.add_argument('--reduce_tf_frac', default=False, type=bool,  # TODO not sure how this works
+    parser.add_argument('--reduce_tf_frac', action='store_true', default=False, type=bool,
                         help='reduce the proportion of teacher forcing with each epoch during training')
+    parser.add_argument('--freeze_encoder', action='store_true', default=False, type=bool,
+                        help='Do not update weights for T5 encoder')
     return parser
 
 def add_discriminator_model_args(parser):
