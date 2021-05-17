@@ -348,8 +348,9 @@ class ModelTrainer:
         return sample
 
     def train_loop(self, trainloader, epoch_i, num_update):
-        self.d_optimizer.zero_grad()
         self.g_optimizer.zero_grad()
+        if hasattr(self, "discriminator"):
+            self.d_optimizer.zero_grad()
 
         g_stepped = False
         d_stepped = False
