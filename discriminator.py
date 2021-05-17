@@ -3,6 +3,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from SeqT5 import SeqT5_Discriminator
 
 
 # class AttDiscriminator(nn.Module):
@@ -107,7 +108,7 @@ class AttDiscriminator(nn.Module):
     def __init__(self, args, src_dict, dst_dict, emb_dim=50, use_cuda=True, dropout=0.1, num_heads=1, layers=3):
         super(AttDiscriminator, self).__init__()
         vocab_size = 200000 # len(src_dict)
-        self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
+        self.create_embedders(vocab_size, emb_dim)
         # self.decoder_layer = nn.TransformerDecoderLayer(emb_dim, num_heads, dim_feedforward=emb_dim)
         # self.decoder = nn.TransformerDecoder(self.decoder_layer, num_layers=layers)
         self.encoder_layer = nn.TransformerEncoderLayer(emb_dim, num_heads, dim_feedforward=emb_dim)
@@ -121,12 +122,19 @@ class AttDiscriminator(nn.Module):
 
         self.dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
 
+    def create_embedders(self, vocab_size, emb_dim):
+        self.embed_src_tokens = self.embed_trg_tokens = nn.Embedding(vocab_size, emb_dim)
+
     def forward(self, source_ids, target_ids):
         return checkpoint.checkpoint(self.do_stuff, source_ids, target_ids, self.dummy_tensor)
 
+    def get_tgt_embeddings(self, tokens):
+        return self.embed_trg_tokens(tokens).permute(1, 0, 2)
+
     def do_stuff(self, source_ids, target_ids, dummy=None):
-        source_emb = self.embed_src_tokens(source_ids).permute(1, 0, 2)
-        target_emb = self.embed_trg_tokens(target_ids).permute(1, 0, 2)
+        # source_emb = self.embed_src_tokens(source_ids).permute(1, 0, 2)
+        # target_emb = self.embed_trg_tokens(target_ids).permute(1, 0, 2)
+        target_emb = self.get_tgt_embeddings(target_ids)
         if self.target_mask.size(0) != target_emb.size(0):
             self.target_mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
         # if self.memory_mask.size(0) != source_emb.size(0):
@@ -143,6 +151,49 @@ class AttDiscriminator(nn.Module):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
+
+
+class T5Discriminator(AttDiscriminator):
+    def __init__(self, args, src_dict, dst_dict, emb_dim=512, use_cuda=True, dropout=0.1, num_heads=1, layers=1):
+        super(T5Discriminator, self).__init__(args, src_dict, dst_dict, emb_dim=emb_dim, use_cuda=use_cuda, dropout=dropout, num_heads=num_heads, layers=layers)
+
+    def create_embedders(self, vocab_size, emb_dim):
+        self.t5_model = SeqT5_Discriminator.from_pretrained('t5-small')
+
+    def get_tgt_embeddings(self, tokens):
+        return self.t5_model(tokens - 1).permute(1, 0, 2)
+
+
+# class T5Discriminator(nn.Module):
+#     def __init__(self):
+#         super(T5Discriminator, self).__init__()
+#         self.t5_model = SeqT5_Discriminator.from_pretrained('t5-small')
+#         self.encoder_layer = nn.TransformerEncoderLayer(512, 1, dim_feedforward=512)
+#         self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=1)
+#         self.pos_encoder = PositionalEncoding(512, 0.1)
+#         self.fc = nn.Linear(512, 1)
+#
+#         self.target_mask = self.generate_square_subsequent_mask(1)
+#
+#     def transform_for_t5(self, tensor):
+#         return tensor - 1
+#
+#     def forward(self, source_ids, target_ids):
+#         target_emb = self.t5_model(
+#             self.transform_for_t5(source_ids), labels=self.transform_for_t5(source_ids), decoding_style="gumbel"
+#         )
+#         if self.target_mask.size(0) != target_emb.size(0):
+#             self.target_mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
+#
+#         target_emb = self.pos_encoder(target_emb)
+#         out = self.encoder(target_emb, mask=self.target_mask)
+#         out = self.fc(out)
+#         return torch.sigmoid(out.squeeze(2))
+#
+#     def generate_square_subsequent_mask(self, sz):
+#         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
+#         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
+#         return mask
 
 
 class PositionalEncoding(nn.Module):

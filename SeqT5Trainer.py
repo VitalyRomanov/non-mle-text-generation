@@ -6,7 +6,7 @@ from torch.autograd import Variable
 import utils
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
-from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator
+from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator
 
 
 class SeqT5Trainer(ModelTrainer):
@@ -52,13 +52,14 @@ class SeqT5Trainer(ModelTrainer):
             self.generator.cpu()
 
     def handicap_discriminator(self):
-        # TODO need this?
-        # fix discriminator word embedding (as Wu et al. do)
-        if hasattr(self, "discriminator"):
-            for p in self.discriminator.embed_src_tokens.parameters():
-                p.requires_grad = False
-            for p in self.discriminator.embed_trg_tokens.parameters():
-                p.requires_grad = False
+        pass
+        # # TODO need this?
+        # # fix discriminator word embedding (as Wu et al. do)
+        # if hasattr(self, "discriminator"):
+        #     for p in self.discriminator.embed_src_tokens.parameters():
+        #         p.requires_grad = False
+        #     for p in self.discriminator.embed_trg_tokens.parameters():
+        #         p.requires_grad = False
 
     def transform_for_t5(self, tensor):
         return tensor - 1
@@ -123,8 +124,9 @@ class SeqT5Mle(SeqT5Trainer):
         self.training_strategy = "mle"  # alternate | mle | rl
         self.sequential_decoding_style = "rl"
 
-    # def create_discriminator(self, args):
-    #     pass
+    def create_discriminator(self, args):
+        self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+                                             use_cuda=self.use_cuda)
 
 
 class SeqT5RL(SeqT5Trainer):
@@ -133,12 +135,20 @@ class SeqT5RL(SeqT5Trainer):
         self.training_strategy = "alternate"  # alternate | mle | rl
         self.sequential_decoding_style = "rl"
 
+    def create_discriminator(self, args):
+        self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+                                             use_cuda=self.use_cuda)
+
 
 class SeqT5Gumbel(SeqT5RL):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.training_strategy = "alternate"  # alternate | mle | rl
         self.sequential_decoding_style = "gumbel"
+
+    def create_discriminator(self, args):
+        self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+                                             use_cuda=self.use_cuda)
 
     # def create_discriminator(self, args):
     #     self.discriminator = GumbelDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,

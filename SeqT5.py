@@ -872,6 +872,132 @@ class SeqT5(T5ForConditionalGeneration):
         )
 
 
+class SeqT5_Discriminator(SeqT5):
+    def __init__(self, config):
+        super(SeqT5_Discriminator, self).__init__(config) # todo check
+    #     self.fc_layer = nn.Linear(config.d_model, 1)
+    #
+    # def compute_logits(self, decoder_output):
+    #     sequence_output = decoder_output[0]
+    #
+    #     # Set device for model parallelism
+    #     if self.model_parallel:
+    #         torch.cuda.set_device(self.encoder.first_device)
+    #         self.lm_head = self.lm_head.to(self.encoder.first_device)
+    #         sequence_output = sequence_output.to(self.lm_head.weight.device)
+    #
+    #     prob = self.fc_layer(sequence_output)
+    #     return prob
+
+    def forward(
+            self,
+            input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            decoder_attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            encoder_outputs=None,
+            past_key_values=None,
+            inputs_embeds=None,
+            decoder_inputs_embeds=None,
+            labels=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            decoding_style="tf",  # options: teacher forcing (tf), gumbel (gumbel), top p (rl)
+            temperature=1.,
+            top_k=0,
+            top_p=1.,
+            epsilon=0.
+    ):
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
+        if head_mask is not None and decoder_head_mask is None:
+            if self.config.num_layers == self.config.num_decoder_layers:
+                warnings.warn(s__HEAD_MASK_WARNING_MSG, FutureWarning)
+                decoder_head_mask = head_mask
+
+        # Encode if needed (training, first prediction pass)
+        if encoder_outputs is None:
+            # Convert encoder inputs in embeddings if needed
+            encoder_outputs = self.encoder(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                inputs_embeds=inputs_embeds,
+                head_mask=head_mask,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+        elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
+            encoder_outputs = BaseModelOutput(
+                last_hidden_state=encoder_outputs[0],
+                hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,
+                attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
+            )
+
+        hidden_states = encoder_outputs[0]
+
+        if self.model_parallel:
+            torch.cuda.set_device(self.decoder.first_device)
+
+        if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
+            # get decoder inputs from shifting lm labels to the right
+            decoder_input_ids = self._shift_right(labels)
+            decoder_input_ids[:, 0] = 0
+
+        # If decoding with past key value states, only the last tokens
+        # should be given as an input
+        if past_key_values is not None:
+            assert labels is None, "Decoder should not use cached key value states when training."
+            if decoder_input_ids is not None:
+                decoder_input_ids = decoder_input_ids[:, -1:]
+            if decoder_inputs_embeds is not None:
+                decoder_inputs_embeds = decoder_inputs_embeds[:, -1:]
+
+        # Set device for model parallelism
+        if self.model_parallel:
+            torch.cuda.set_device(self.decoder.first_device)
+            hidden_states = hidden_states.to(self.decoder.first_device)
+            if decoder_input_ids is not None:
+                decoder_input_ids = decoder_input_ids.to(self.decoder.first_device)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.decoder.first_device)
+            if decoder_attention_mask is not None:
+                decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
+
+        # Decode
+
+        # decode_args =  (
+        #     decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+        #     hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+        #     output_hidden_states, return_dict
+        # )
+
+        # decoder_outputs = self.decoder(
+        #     input_ids=decoder_input_ids,
+        #     attention_mask=decoder_attention_mask,
+        #     inputs_embeds=decoder_inputs_embeds,
+        #     past_key_values=past_key_values,
+        #     encoder_hidden_states=hidden_states,
+        #     encoder_attention_mask=attention_mask,
+        #     head_mask=decoder_head_mask,
+        #     encoder_head_mask=head_mask,
+        #     use_cache=use_cache,
+        #     output_attentions=output_attentions,
+        #     output_hidden_states=output_hidden_states,
+        #     return_dict=return_dict,
+        # )
+        #
+        # lm_logits = self.compute_logits(decoder_outputs)
+
+        return hidden_states
+
+
 def test_T5():
     from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 
