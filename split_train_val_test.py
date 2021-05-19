@@ -121,28 +121,37 @@ def write_splits(
 
     src_dict, tgt_dict = load_dictionaries(path, src, tgt)
 
+    def get_num_lines(file, **kwargs):
+        return sum(1 for line in open(file, **kwargs))
+
     for split in ["train", "valid", "test"]:
         src_bin = IndexedDatasetBuilder(os.path.join(path, f"{split}.{src}-{tgt}.{src}.bin"))
         tgt_bin = IndexedDatasetBuilder(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.bin"))
 
-        src_lines = open(os.path.join(path, f"{split}.{src}")).readlines()
-        tgt_lines = open(os.path.join(path, f"{split}.{tgt}")).readlines()
-        assert len(src_lines) == len(tgt_lines)
-        for src_line, tgt_line in zip(src_lines, tgt_lines):
-            src_tokens = Tokenizer.tokenize(src_line.strip("\n"), src_dict, tokenize=tokenize, add_if_not_exist=False)
-            tgt_tokens = Tokenizer.tokenize(tgt_line.strip("\n"), tgt_dict, tokenize=tokenize, add_if_not_exist=False)
-            if lenlim is not None and (
-                len(src_tokens) > lenlim or len(tgt_tokens) > lenlim
-            ):
-                skipped += 1
-                continue
-            src_bin.add_item(src_tokens)
-            tgt_bin.add_item(tgt_tokens)
-            len_src += len(src_tokens)
-            len_tgt += len(tgt_tokens)
-            num_added += 1
-        src_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{src}.idx"))
-        tgt_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.idx"))
+        # src_lines = open(os.path.join(path, f"{split}.{src}"), newline='\r\n').readlines()
+        # tgt_lines = open(os.path.join(path, f"{split}.{tgt}"), newline='\r\n').readlines()
+        src_path = os.path.join(path, f"{split}.{src}")
+        tgt_path = os.path.join(path, f"{split}.{tgt}")
+
+        assert get_num_lines(src_path, newline='\n') == get_num_lines(tgt_path, newline='\n')
+
+        with open(src_path, newline='\n') as src_lines:
+            with open(tgt_path, newline='\n') as tgt_lines:
+                for src_line, tgt_line in zip(src_lines, tgt_lines):
+                    src_tokens = Tokenizer.tokenize(src_line.strip("\n"), src_dict, tokenize=tokenize, add_if_not_exist=False)
+                    tgt_tokens = Tokenizer.tokenize(tgt_line.strip("\n"), tgt_dict, tokenize=tokenize, add_if_not_exist=False)
+                    if lenlim is not None and (
+                        len(src_tokens) > lenlim or len(tgt_tokens) > lenlim
+                    ):
+                        skipped += 1
+                        continue
+                    src_bin.add_item(src_tokens)
+                    tgt_bin.add_item(tgt_tokens)
+                    len_src += len(src_tokens)
+                    len_tgt += len(tgt_tokens)
+                    num_added += 1
+                src_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{src}.idx"))
+                tgt_bin.finalize(os.path.join(path, f"{split}.{src}-{tgt}.{tgt}.idx"))
 
     print(f"Source average length {len_src / num_added}")
     print(f"Target average length {len_tgt / num_added}")
@@ -221,6 +230,8 @@ def generate_nmt_splits2(
 ):
 
     def generate_partition(partition):
+        # src_sents = open(os.path.join(dataset_path, f"{partition}.{src_lang}"), newline='\r\n').readlines()
+        # tgt_sents = open(os.path.join(dataset_path, f"{partition}.{tgt_lang}"), newline='\r\n').readlines()
         src_sents = open(os.path.join(dataset_path, f"{partition}.{src_lang}")).readlines()
         tgt_sents = open(os.path.join(dataset_path, f"{partition}.{tgt_lang}")).readlines()
         assert len(src_sents) == len(tgt_sents)
@@ -241,8 +252,8 @@ def generate_nmt_splits2(
 
 
 if __name__ == "__main__":
-    src_lang = 'en'
-    tgt_lang = 'ro'
+    src_lang = 'ro'
+    tgt_lang = 'en'
 
     file_dir = 'data-bin/'
 
@@ -252,7 +263,7 @@ if __name__ == "__main__":
         dataset_path="wmt16_en-ro",
         output_path=file_dir + src_lang + '-' + tgt_lang,
         tokenizer="t5-small",
-        prefix="translate English to Romanian: "
+        prefix="translate Romanian to English: "
     )
 
     # # TODO check out dataset binarization
