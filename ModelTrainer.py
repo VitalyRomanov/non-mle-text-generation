@@ -162,7 +162,14 @@ class ModelTrainer:
         self._logsoftmax = torch.nn.LogSoftmax(dim=-1)
 
         self.g_criterion = lambda pred, true: self._g_criterion(self._logsoftmax(pred), true)
-        self.pg_criterion = lambda pred, true, reward, use_cuda: self._pg_criterion(self._logsoftmax(pred), true, reward, use_cuda)
+        self.pg_criterion = lambda pred, true, reward, modified_logits, predicted_tokens: \
+            self._pg_criterion(
+                self._logsoftmax(pred),
+                true,
+                reward,
+                self._logsoftmax(modified_logits) if modified_logits is not None else None,
+                predicted_tokens,
+            )
 
     def handicap_discriminator(self):
         pass
@@ -197,13 +204,13 @@ class ModelTrainer:
                     self.summary_writer.add_text(f"gen/{ind}", sent, global_step=batch_step)
         # self.summary_writer.add_scalars(main_name, scores, batch_step)
 
-    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.9, temp=1.):
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=1.):
         return self.teacher_forcing_generation(sample)
 
     def pg_step(self, sample, batch_i, epoch, loader_len):
         print("Policy Gradient Training")
 
-        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1)
+        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=10)
 
         with torch.no_grad():
             # if self.sequential_decoding_style == "gumbel":
@@ -212,7 +219,7 @@ class ModelTrainer:
             # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
             reward = self.discriminator(output["prediction"], output["prediction"])
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, self.use_cuda)
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
@@ -258,7 +265,7 @@ class ModelTrainer:
 
         if seq_decoding:
             print("Seq MLE Training")
-            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1)
+            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=10)
         else:
             print("MLE Training")
             output = self.teacher_forcing_generation(sample)
@@ -296,7 +303,7 @@ class ModelTrainer:
             true_labels = true_labels.cuda()
 
         with torch.no_grad():
-            gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1)  # 64 X 50 X 6632
+            gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=10)  # 64 X 50 X 6632
 
         # if self.sequential_decoding_style == "gumbel":
         #     true_sentence = gen_output["target_onehot"]

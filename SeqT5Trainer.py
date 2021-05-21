@@ -61,13 +61,25 @@ class SeqT5Trainer(ModelTrainer):
         #     for p in self.discriminator.embed_trg_tokens.parameters():
         #         p.requires_grad = False
 
+    def create_losses(self):
+        # define loss function
+        super(SeqT5Trainer, self).create_losses()
+        self.pg_criterion = lambda pred, true, reward, modified_logits, predicted_tokens: \
+            self._pg_criterion(
+                self._logsoftmax(pred),
+                self.transform_for_t5(true),
+                reward,
+                self._logsoftmax(modified_logits) if modified_logits is not None else None,
+                self.transform_for_t5(predicted_tokens) if predicted_tokens is not None else None
+            )
+
     def transform_for_t5(self, tensor):
         return tensor - 1
 
     def transform_from_t5(self, tensor):
         return tensor + 1
 
-    def wrap_for_output(self, sample, logits, input_onehot=None, output_onehot=None, target_onehot=None):
+    def wrap_for_output(self, sample, logits, modified_logits=None, output_tokens=None, input_onehot=None, output_onehot=None, target_onehot=None):
         if input_onehot is not None: # add zeros to use indexing from 1
             zeros = torch.zeros((input_onehot.shape[0], input_onehot.shape[1], 1)).to(input_onehot.device)
             input_onehot = torch.cat([zeros, input_onehot], dim=2)
@@ -76,14 +88,22 @@ class SeqT5Trainer(ModelTrainer):
             zeros = torch.zeros((target_onehot.shape[0], target_onehot.shape[1], 1)).to(target_onehot.device)
             target_onehot = torch.cat([zeros, target_onehot], dim=2)
 
+        if output_tokens is not None:
+            pred = output_tokens
+        elif output_onehot is not None:
+            pred = output_onehot.argmax(-1)
+        else:
+            pred = logits.argmax(-1)
+
         output = {
             "logits": logits,
             "target": sample["target"],
             "mask": self.get_length_mask(sample["target"]),
-            "prediction": self.transform_from_t5(logits.argmax(-1)),
+            "prediction": self.transform_from_t5(pred),
             "input_onehot": input_onehot,
             "output_onehot": output_onehot,
             "target_onehot": target_onehot,
+            "modified_logits": modified_logits,
         }
 
         output["loss"] = self.g_criterion(
@@ -92,7 +112,7 @@ class SeqT5Trainer(ModelTrainer):
         )
         return output
 
-    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=0.6, temp=.2):
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=.2):
         t5out = self.generator(
             self.transform_for_t5(sample['net_input']['src_tokens']), attention_mask=sample["attention_mask"],
             labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
@@ -101,15 +121,21 @@ class SeqT5Trainer(ModelTrainer):
 
         # if decoding_style == "gumbel":
         #     return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
-        return self.wrap_for_output(sample, t5out.logits)
+        return self.wrap_for_output(
+            sample, t5out.logits, modified_logits=t5out.modified_logits, output_tokens=t5out.output_tokens,
+            input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot
+        )
 
     def teacher_forcing_generation(self, sample):
-        logits = self.generator(
+        t5out = self.generator(
             self.transform_for_t5(sample['net_input']['src_tokens']), attention_mask=sample["attention_mask"],
             labels=self.transform_for_t5(sample['target']), decoding_style="tf"
-        ).logits
+        )
 
-        return self.wrap_for_output(sample, logits)
+        return self.wrap_for_output(
+            sample, t5out.logits, modified_logits=t5out.modified_logits, output_tokens=t5out.output_tokens,
+            input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot
+        )
 
     def eval_generation(self, sample):
         return self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1, temp=.5)

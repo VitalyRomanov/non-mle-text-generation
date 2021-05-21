@@ -49,6 +49,8 @@ class AdversarialSeq2SeqLMOutput(Seq2SeqLMOutput):
     input_onehot: Optional[Tuple[torch.FloatTensor]] = None
     output_onehot: Optional[Tuple[torch.FloatTensor]] = None
     target_onehot: Optional[Tuple[torch.FloatTensor]] = None
+    output_tokens: Optional[Tuple[torch.LongTensor]] = None
+    modified_logits: Optional[Tuple[torch.FloatTensor]] = None
 
 
 class T5SequentialDecoder(T5Stack):
@@ -552,8 +554,10 @@ class SeqT5(T5ForConditionalGeneration):
         if not hasattr(self, "gumbel_dist"):
             self.create_gumbel_distribution()
 
+        output_logits = []
+        modified_logits = []
         decoder_inputs_embeds = None
-        output_onehot = None
+        output_onehot = []
         for tok_ind in range(decoder_input_ids.shape[1]):
             if tok_ind == 0:
                 one_hot_softmax = torch.zeros((decoder_input_ids.shape[0], self.decoder.embed_tokens.num_embeddings)).to(decoder_input_ids.device)
@@ -589,16 +593,16 @@ class SeqT5(T5ForConditionalGeneration):
             last_token_logits += self.gumbel_dist.sample(last_token_logits.shape).squeeze(-1).to(decoder_input_ids.device)
             last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
 
-            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
+            last_token_logits = torch.log(torch.nn.functional.softmax(last_token_logits) * epsilon + torch.nn.functional.softmax(last_token_logits_filtered) * (1. - epsilon))
+
+            output_logits.append(lm_logits[:, -1, :].unsqueeze(1))
+            output_logits.append(last_token_logits.unsqueeze(1))
 
             one_hot_softmax = nn.functional.gumbel_softmax(
                 last_token_logits, tau=temperature, hard=True
             )
 
-            if output_onehot is None:
-                output_onehot = one_hot_softmax.unsqueeze(1)
-            else:
-                output_onehot = torch.cat([output_onehot, one_hot_softmax.unsqueeze(1)], dim=1)
+            output_onehot.append(one_hot_softmax.unsqueeze(1))
 
         with torch.no_grad():
             decoder_outputs = self.decoder(
@@ -616,7 +620,11 @@ class SeqT5(T5ForConditionalGeneration):
                 return_dict=return_dict,
             )
 
-        return decoder_outputs, lm_logits, output_onehot
+        output_logits = torch.cat(output_logits, dim=1)
+        modified_logits = torch.cat(modified_logits, dim=1)
+        output_onehot = torch.cat(output_onehot, dim=1)
+
+        return decoder_outputs, output_logits, output_onehot, modified_logits
 
     def teacher_forcing_decode(
             self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
@@ -652,7 +660,9 @@ class SeqT5(T5ForConditionalGeneration):
         Decode with top p gradual sampling for RL objective
         """
         decoder_inputs_embeds = None
+        modified_logits = []
         output_logits = []
+        output_tokens = []
         batch_size, seq_len = decoder_input_ids.shape[:2]
         for tok_ind in range(seq_len):
             if tok_ind == 0:
@@ -689,7 +699,7 @@ class SeqT5(T5ForConditionalGeneration):
             last_token_logits = lm_logits[:, -1, :] / temperature
             last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
 
-            last_token_logits = last_token_logits * epsilon + last_token_logits_filtered * (1. - epsilon)
+            last_token_logits = torch.log(torch.nn.functional.softmax(last_token_logits, dim=-1) * epsilon + torch.nn.functional.softmax(last_token_logits_filtered, dim=-1) * (1. - epsilon))
 
             probs = nn.functional.softmax(
                 last_token_logits, dim=1
@@ -697,6 +707,8 @@ class SeqT5(T5ForConditionalGeneration):
 
             next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
             output_logits.append(lm_logits[:, -1, :].unsqueeze(1))
+            modified_logits.append(last_token_logits.unsqueeze(1))
+            output_tokens.append(next_tokens)
 
         with torch.no_grad():
             decoder_outputs = self.decoder(
@@ -714,7 +726,11 @@ class SeqT5(T5ForConditionalGeneration):
                 return_dict=return_dict,
             )
 
-        return decoder_outputs, torch.cat(output_logits, dim=1)
+        output_logits = torch.cat(output_logits, dim=1)
+        modified_logits = torch.cat(modified_logits, dim=1)
+        output_tokens = torch.cat(output_tokens, dim=1)
+
+        return decoder_outputs, output_logits, output_tokens, modified_logits
 
     def forward(
         self,
@@ -831,18 +847,15 @@ class SeqT5(T5ForConditionalGeneration):
 
         if decoding_style == "tf":
             decoder_outputs, lm_logits = self.teacher_forcing_decode(*decode_args, top_k=top_k, top_p=top_p)
-            input_onehot = None
-            output_onehot = None
-            target_onehot = None
+            input_onehot = output_onehot = target_onehot = modified_logits = output_tokens = None
         elif decoding_style == "gumbel":
             input_onehot = nn.functional.one_hot(input_ids, num_classes=self.decoder.embed_tokens.num_embeddings).float()
             target_onehot = nn.functional.one_hot(decoder_input_ids, num_classes=self.decoder.embed_tokens.num_embeddings).float()
-            decoder_outputs, lm_logits, output_onehot = self.gumbel_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
+            decoder_outputs, lm_logits, output_onehot, modified_logits = self.gumbel_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
+            output_tokens = None
         elif decoding_style == "rl":
-            decoder_outputs, lm_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
-            input_onehot = None
-            output_onehot = None
-            target_onehot = None
+            decoder_outputs, lm_logits, output_tokens, modified_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
+            input_onehot = output_onehot = target_onehot = None
         else:
             raise ValueError(f"`decoding_style` is {decoding_style} but supported values are: tf|gumbel|rl")
 
@@ -868,7 +881,9 @@ class SeqT5(T5ForConditionalGeneration):
             encoder_attentions=encoder_outputs.attentions,
             input_onehot=input_onehot,
             output_onehot=output_onehot,
-            target_onehot=target_onehot
+            target_onehot=target_onehot,
+            output_tokens=output_tokens,
+            modified_logits=modified_logits
         )
 
 
