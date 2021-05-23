@@ -210,7 +210,7 @@ class ModelTrainer:
     def pg_step(self, sample, batch_i, epoch, loader_len):
         print("Policy Gradient Training")
 
-        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=10)
+        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
 
         with torch.no_grad():
             # if self.sequential_decoding_style == "gumbel":
@@ -218,8 +218,11 @@ class ModelTrainer:
             # else:
             # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
             reward = self.discriminator(output["prediction"], output["prediction"])
+            gen_reward = (output["prediction"] == sample['target']).float() - 0.5
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None)) + \
+                  self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
+                                    output.get("prediction", None))
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
@@ -265,7 +268,7 @@ class ModelTrainer:
 
         if seq_decoding:
             print("Seq MLE Training")
-            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=10)
+            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
         else:
             print("MLE Training")
             output = self.teacher_forcing_generation(sample)
@@ -303,7 +306,7 @@ class ModelTrainer:
             true_labels = true_labels.cuda()
 
         with torch.no_grad():
-            gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=10)  # 64 X 50 X 6632
+            gen_output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)  # 64 X 50 X 6632
 
         # if self.sequential_decoding_style == "gumbel":
         #     true_sentence = gen_output["target_onehot"]
@@ -371,13 +374,13 @@ class ModelTrainer:
             if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
                 if hasattr(self, "discriminator"):
                     if self.training_strategy == "alternate":
-                        if random.random() >= mle_frac:  # TODO why use both?
+                        if random.random() <= mle_frac:
                             self.mle_step(sample, i, epoch_i, len(trainloader))
                         else:
-                            if random.random() > 0.5:
-                                self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
-                            else:
-                                self.pg_step(sample, i, epoch_i, len(trainloader))
+                            # if random.random() > 0.5:
+                            #     self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
+                            # else:
+                            self.pg_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "mle":
                         self.mle_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "rl":
