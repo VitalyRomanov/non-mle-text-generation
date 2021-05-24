@@ -6,7 +6,7 @@ from torch.autograd import Variable
 import utils
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
-from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator
+from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator, T5SemanticDiscriminator
 
 
 class SeqT5Trainer(ModelTrainer):
@@ -163,8 +163,9 @@ class SeqT5RL(SeqT5Trainer):
         self.sequential_decoding_style = "rl"
 
     def create_discriminator(self, args):
-        self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
-                                             use_cuda=self.use_cuda)
+        # self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+        #                                      use_cuda=self.use_cuda)
+        self.discriminator = T5SemanticDiscriminator()
 
 
 class SeqT5Gumbel(SeqT5RL):
