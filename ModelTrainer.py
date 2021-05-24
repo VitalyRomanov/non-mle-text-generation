@@ -204,7 +204,7 @@ class ModelTrainer:
                     self.summary_writer.add_text(f"gen/{ind}", sent, global_step=batch_step)
         # self.summary_writer.add_scalars(main_name, scores, batch_step)
 
-    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=1.):
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=1., ss_prob=0.):
         return self.teacher_forcing_generation(sample)
 
     def pg_step(self, sample, batch_i, epoch, loader_len):
@@ -264,8 +264,10 @@ class ModelTrainer:
     def mle_step(self, sample, batch_i, epoch, loader_len, seq_decoding=False):
 
         if seq_decoding:
-            print("Seq MLE Training")
-            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
+            print("Scheduled Sampling Training")
+            ss_prob = epoch / self.args.epochs * 0.5
+            print("ss_prob (probability of scheduled sampling)", ss_prob)
+            output = self.sequential_generation(sample, decoding_style="ss", top_k=0, top_p=0.6, ss_prob=ss_prob)
         else:
             print("MLE Training")
             output = self.teacher_forcing_generation(sample)
@@ -374,10 +376,10 @@ class ModelTrainer:
                         if random.random() <= mle_frac:
                             self.mle_step(sample, i, epoch_i, len(trainloader))
                         else:
-                            # if random.random() > 0.5:
-                            #     self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
-                            # else:
-                            self.pg_step(sample, i, epoch_i, len(trainloader))
+                            if random.random() > 0.5:
+                                self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
+                            else:
+                                self.pg_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "mle":
                         self.mle_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "rl":

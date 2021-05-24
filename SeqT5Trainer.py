@@ -112,11 +112,11 @@ class SeqT5Trainer(ModelTrainer):
         )
         return output
 
-    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=.2):
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=.2, ss_prob=0.):
         t5out = self.generator(
             self.transform_for_t5(sample['net_input']['src_tokens']), attention_mask=sample["attention_mask"],
             labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
-            temperature=temp, epsilon=self.args.imp_smpl_epsilon
+            temperature=temp, epsilon=self.args.imp_smpl_epsilon, ss_prob=ss_prob
         )
 
         # if decoding_style == "gumbel":

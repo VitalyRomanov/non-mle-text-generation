@@ -1,6 +1,7 @@
 import copy
 import math
 import os
+import random
 import warnings
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -732,6 +733,74 @@ class SeqT5(T5ForConditionalGeneration):
 
         return decoder_outputs, output_logits, output_tokens, modified_logits
 
+    def ss_decode(
+            self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+            hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1., epsilon=0., ss_prob=0.
+    ):
+        """
+        Decode with Scheduled Sampling objective
+        """
+        decoder_inputs_embeds = None
+        modified_logits = []
+        output_logits = []
+        output_tokens = []
+        batch_size, seq_len = decoder_input_ids.shape[:2]
+        for ind, tok_ind in enumerate(range(seq_len)):
+            if tok_ind == 0:
+                decoder_inputs_embeds = self.decoder.embed_tokens(torch.LongTensor([[0]]).repeat(batch_size, 1).to(decoder_input_ids.device))
+            else:
+                decoder_inputs_embeds = torch.cat([
+                    decoder_inputs_embeds, self.decoder.embed_tokens(next_tokens)
+                ], dim=1)
+
+            dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+            lm_logits = checkpoint.checkpoint(self.seq_make_step(return_dict=True, use_cache=use_cache),
+                                              decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+                                              hidden_states, attention_mask,
+                                              decoder_head_mask, head_mask, output_attentions, output_hidden_states,
+                                              dummy_tensor)
+
+            last_token_logits = lm_logits[:, -1, :] / temperature
+            last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
+
+            last_token_logits = torch.log(torch.nn.functional.softmax(last_token_logits, dim=-1) * epsilon + torch.nn.functional.softmax(last_token_logits_filtered, dim=-1) * (1. - epsilon))
+
+            probs = nn.functional.softmax(
+                last_token_logits, dim=1
+            )
+
+            if random.random() <= ss_prob or ind+1==decoder_input_ids.size(1):
+                next_tokens = torch.multinomial(probs, num_samples=1)#.squeeze(1)
+            else:
+                next_tokens = decoder_input_ids[:, ind+1].unsqueeze(1)
+            output_logits.append(lm_logits[:, -1, :].unsqueeze(1))
+            modified_logits.append(last_token_logits.unsqueeze(1))
+            output_tokens.append(probs.argmax(-1).unsqueeze(1))
+
+        with torch.no_grad():
+            decoder_outputs = self.decoder(
+                input_ids=None,  # decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_values=past_key_values,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=decoder_head_mask,
+                encoder_head_mask=head_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+
+        output_logits = torch.cat(output_logits, dim=1)
+        modified_logits = torch.cat(modified_logits, dim=1)
+        output_tokens = torch.cat(output_tokens, dim=1)
+
+        return decoder_outputs, output_logits, output_tokens, modified_logits
+
+
     def forward(
         self,
         input_ids=None,
@@ -753,7 +822,8 @@ class SeqT5(T5ForConditionalGeneration):
         temperature=1.,
         top_k=0,
         top_p=1.,
-        epsilon=0.
+        epsilon=0.,
+        ss_prob=0.
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -855,6 +925,9 @@ class SeqT5(T5ForConditionalGeneration):
             output_tokens = None
         elif decoding_style == "rl":
             decoder_outputs, lm_logits, output_tokens, modified_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
+            input_onehot = output_onehot = target_onehot = None
+        elif decoding_style == "ss":
+            decoder_outputs, lm_logits, output_tokens, modified_logits = self.ss_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon, ss_prob=ss_prob)
             input_onehot = output_onehot = target_onehot = None
         else:
             raise ValueError(f"`decoding_style` is {decoding_style} but supported values are: tf|gumbel|rl")
