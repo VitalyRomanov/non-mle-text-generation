@@ -163,9 +163,9 @@ class SeqT5RL(SeqT5Trainer):
         self.sequential_decoding_style = "rl"
 
     def create_discriminator(self, args):
-        # self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
-        #                                      use_cuda=self.use_cuda)
-        self.discriminator = T5SemanticDiscriminator()
+        self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+                                             use_cuda=self.use_cuda)
+        # self.discriminator = T5SemanticDiscriminator()
 
 
 class SeqT5Gumbel(SeqT5RL):

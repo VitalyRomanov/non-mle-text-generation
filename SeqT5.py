@@ -1058,32 +1058,34 @@ class SeqT5_Discriminator(SeqT5):
             if decoder_attention_mask is not None:
                 decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
 
-        # Decode
+        return hidden_states
 
-        # decode_args =  (
-        #     decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
-        #     hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
-        #     output_hidden_states, return_dict
+        # # Decode
+        #
+        # # decode_args =  (
+        # #     decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+        # #     hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+        # #     output_hidden_states, return_dict
+        # # )
+        #
+        # decoder_outputs = self.decoder(
+        #     input_ids=decoder_input_ids,
+        #     attention_mask=decoder_attention_mask,
+        #     inputs_embeds=decoder_inputs_embeds,
+        #     past_key_values=past_key_values,
+        #     encoder_hidden_states=hidden_states,
+        #     encoder_attention_mask=attention_mask,
+        #     head_mask=decoder_head_mask,
+        #     encoder_head_mask=head_mask,
+        #     use_cache=use_cache,
+        #     output_attentions=output_attentions,
+        #     output_hidden_states=output_hidden_states,
+        #     return_dict=return_dict,
         # )
-
-        decoder_outputs = self.decoder(
-            input_ids=decoder_input_ids,
-            attention_mask=decoder_attention_mask,
-            inputs_embeds=decoder_inputs_embeds,
-            past_key_values=past_key_values,
-            encoder_hidden_states=hidden_states,
-            encoder_attention_mask=attention_mask,
-            head_mask=decoder_head_mask,
-            encoder_head_mask=head_mask,
-            use_cache=use_cache,
-            output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-        )
-
-        logits = self.compute_logits(decoder_outputs)
-
-        return logits
+        #
+        # logits = self.compute_logits(decoder_outputs)
+        #
+        # return logits
 
 
 def test_T5():
