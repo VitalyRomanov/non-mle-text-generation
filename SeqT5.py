@@ -890,19 +890,19 @@ class SeqT5(T5ForConditionalGeneration):
 class SeqT5_Discriminator(SeqT5):
     def __init__(self, config):
         super(SeqT5_Discriminator, self).__init__(config) # todo check
-    #     self.fc_layer = nn.Linear(config.d_model, 1)
-    #
-    # def compute_logits(self, decoder_output):
-    #     sequence_output = decoder_output[0]
-    #
-    #     # Set device for model parallelism
-    #     if self.model_parallel:
-    #         torch.cuda.set_device(self.encoder.first_device)
-    #         self.lm_head = self.lm_head.to(self.encoder.first_device)
-    #         sequence_output = sequence_output.to(self.lm_head.weight.device)
-    #
-    #     prob = self.fc_layer(sequence_output)
-    #     return prob
+        self.fc_layer = nn.Linear(config.d_model, 1)
+
+    def compute_logits(self, decoder_output):
+        sequence_output = decoder_output[0]
+
+        # Set device for model parallelism
+        if self.model_parallel:
+            torch.cuda.set_device(self.encoder.first_device)
+            self.lm_head = self.lm_head.to(self.encoder.first_device)
+            sequence_output = sequence_output.to(self.lm_head.weight.device)
+
+        prob = self.fc_layer(sequence_output)
+        return prob
 
     def forward(
             self,
@@ -993,24 +993,24 @@ class SeqT5_Discriminator(SeqT5):
         #     output_hidden_states, return_dict
         # )
 
-        # decoder_outputs = self.decoder(
-        #     input_ids=decoder_input_ids,
-        #     attention_mask=decoder_attention_mask,
-        #     inputs_embeds=decoder_inputs_embeds,
-        #     past_key_values=past_key_values,
-        #     encoder_hidden_states=hidden_states,
-        #     encoder_attention_mask=attention_mask,
-        #     head_mask=decoder_head_mask,
-        #     encoder_head_mask=head_mask,
-        #     use_cache=use_cache,
-        #     output_attentions=output_attentions,
-        #     output_hidden_states=output_hidden_states,
-        #     return_dict=return_dict,
-        # )
-        #
-        # lm_logits = self.compute_logits(decoder_outputs)
+        decoder_outputs = self.decoder(
+            input_ids=decoder_input_ids,
+            attention_mask=decoder_attention_mask,
+            inputs_embeds=decoder_inputs_embeds,
+            past_key_values=past_key_values,
+            encoder_hidden_states=hidden_states,
+            encoder_attention_mask=attention_mask,
+            head_mask=decoder_head_mask,
+            encoder_head_mask=head_mask,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
 
-        return hidden_states
+        logits = self.compute_logits(decoder_outputs)
+
+        return logits
 
 
 def test_T5():

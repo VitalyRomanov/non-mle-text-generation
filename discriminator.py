@@ -179,15 +179,15 @@ class T5SemanticDiscriminator(nn.Module):
         return tensor - 1
 
     def forward(self, source_ids, target_ids):
-        target_emb = self.t5_model(
+        out = self.t5_model(
             self.transform_for_t5(source_ids), labels=self.transform_for_t5(target_ids), decoding_style="tf"
         )
-        if self.target_mask.size(0) != target_emb.size(0):
-            self.target_mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
+        # if self.target_mask.size(0) != target_emb.size(0):
+        #     self.target_mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
 
-        target_emb = self.pos_encoder(target_emb)
-        out = self.encoder(target_emb, mask=self.target_mask)
-        out = self.fc(out)
+        # target_emb = self.pos_encoder(target_emb)
+        # out = self.encoder(target_emb, mask=self.target_mask)
+        # out = self.fc(out)
         return torch.sigmoid(out.squeeze(2))
 
     def generate_square_subsequent_mask(self, sz):
