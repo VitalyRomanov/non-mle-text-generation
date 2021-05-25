@@ -115,16 +115,16 @@ def test_T5(args):
         generator_params = get_grid()
     else:
         generator_params = [{
-            "temperature": args.t,
-            "top_p": args.top_p if type(args.top_p) is not str else list(map(float,args.top_p.split(","))),
-            "top_k": args.top_k if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
+            "temperature": float(args.t) if "," not in args.t else list(map(int,args.t.split(","))),
+            "top_p": float(args.top_p) if "," not in args.top_p else list(map(float,args.top_p.split(","))),
+            "top_k": int(args.top_k) if "," not in args.top_k else list(map(int,args.top_k.split(","))),
             "do_sample": args.do_sample,
             "max_length": args.max_length,
-            "repetition_penalty": args.repetition_penalty if type(args.top_p) is not str else list(map(float,args.top_p.split(","))),
-            "num_beams": args.num_beams if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
+            "repetition_penalty": float(args.repetition_penalty) if "," not in args.repetition_penalty else list(map(float,args.repetition_penalty.split(","))),
+            "num_beams": int(args.num_beams) if "," not in args.num_beams else list(map(int,args.num_beams.split(","))),
             "length_penalty": args.length_penalty,
-            "no_repeat_ngram_size": args.no_repeat_ngram_size if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
-            "num_beam_groups": args.num_beam_groups if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
+            "no_repeat_ngram_size": int(args.no_repeat_ngram_size) if "," not in args.no_repeat_ngram_size else list(map(int,args.no_repeat_ngram_size.split(","))),
+            "num_beam_groups": int(args.num_beam_groups) if "," not in args.num_beam_groups else list(map(int,args.num_beam_groups.split(","))),
             "diversity_penalty": args.diversity_penalty
         }]
 
@@ -209,16 +209,16 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_path", default='checkpoint/SeqT5Mle_t5_mle/best_gmodel.pt')
     parser.add_argument("--data_path", default=None)
     parser.add_argument("--use_test", action='store_true')
-    parser.add_argument("--t", default=1., type=float)
-    parser.add_argument("--top_p", default=0.9, type=float)
-    parser.add_argument("--top_k", default=50, type=int)
+    parser.add_argument("--t", default=1.)#, type=float)
+    parser.add_argument("--top_p", default=0.9)#, type=float)
+    parser.add_argument("--top_k", default=50)#, type=int)
     parser.add_argument("--do_sample", default=True, type=bool)
     parser.add_argument("--max_length", default=100, type=int)
-    parser.add_argument("--repetition_penalty", default=1., type=float)
-    parser.add_argument("--num_beams", default=1, type=int)
+    parser.add_argument("--repetition_penalty", default=1.)#, type=float)
+    parser.add_argument("--num_beams", default=1)#, type=int)
     parser.add_argument("--length_penalty", default=1, type=int)
-    parser.add_argument("--no_repeat_ngram_size", default=0, type=int)
-    parser.add_argument("--num_beam_groups", default=1, type=int)
+    parser.add_argument("--no_repeat_ngram_size", default=0)#, type=int)
+    parser.add_argument("--num_beam_groups", default=1)#, type=int)
     parser.add_argument("--diversity_penalty", default=0, type=int)
     parser.add_argument("--use_parameter_grid", action='store_true')
 
