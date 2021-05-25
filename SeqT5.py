@@ -597,7 +597,7 @@ class SeqT5(T5ForConditionalGeneration):
             last_token_logits = torch.log(torch.nn.functional.softmax(last_token_logits) * epsilon + torch.nn.functional.softmax(last_token_logits_filtered) * (1. - epsilon))
 
             output_logits.append(lm_logits[:, -1, :].unsqueeze(1))
-            output_logits.append(last_token_logits.unsqueeze(1))
+            modified_logits.append(last_token_logits.unsqueeze(1))
 
             one_hot_softmax = nn.functional.gumbel_softmax(
                 last_token_logits, tau=temperature, hard=True
