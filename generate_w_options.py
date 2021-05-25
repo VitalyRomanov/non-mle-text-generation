@@ -1,4 +1,7 @@
 import argparse
+import json
+
+import tqdm
 
 # Parameters:
 #
@@ -92,6 +95,8 @@ import argparse
 import os
 from pprint import pprint
 
+import datasets
+
 
 def test_T5(args):
     from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
@@ -122,29 +127,67 @@ def test_T5(args):
             "diversity_penalty": args.diversity_penalty
         }]
 
+    bleu_metric = datasets.load_metric('sacrebleu')
+    rouge_metric = datasets.load_metric('rouge')
+
+    metrics = {
+        "bleu": [],
+        "rouge1f1": [],
+        "rouge2f1": [],
+        "rougeLf1": []
+    }
+
+    experiments = []
+    outputs = []
+
     for g_params in generator_params:
         print(g_params)
         print("\n\n\n")
 
-        for ind, entry in enumerate(partition):
+        for ind, entry in tqdm.tqdm(enumerate(partition)):
             input_ids = entry["source"] - 1
             labels = entry["target"] - 1
 
             outputs = model.generate(input_ids.reshape(1,-1), **g_params)[0][1:]
 
-            print("s: ", tokenizer.decode(input_ids))
-            print("t: ", tokenizer.decode(labels))
-            print("g: ", tokenizer.decode(outputs))
-            print("")
+            inp = tokenizer.decode(input_ids, skip_special_tokens=True)
+            trg = tokenizer.decode(labels, skip_special_tokens=True)
+            pred = tokenizer.decode(outputs, skip_special_tokens=True)
+
+            bleu = bleu_metric.compute(predictions=[pred], references=[[trg]]) # bleu["score"]
+            rouge = bleu_metric.compute(predictions=[pred], references=[inp]) # rouge["rougeL"].high.fmeasure
+
+            metrics["bleu"].append(bleu["score"])
+            metrics["rouge1f1"].append(rouge["rouge1"].high.fmeasure)
+            metrics["rouge2f1"].append(rouge["rouge2"].high.fmeasure)
+            metrics["rougeLf1"].append(rouge["rougeL"].high.fmeasure)
+
+            outputs.append({
+                "input": inp,
+                "target": trg,
+                "output": pred,
+                "metrics": metrics
+            })
+
+            # print("s: ", tokenizer.decode(input_ids, skip_special_tokens=True))
+            # print("t: ", tokenizer.decode(labels, skip_special_tokens=True))
+            # print("g: ", tokenizer.decode(outputs, skip_special_tokens=True))
+            # print("")
 
             if ind > 10 :
                 break
 
+        experiments.append({
+            "setting": generator_params,
+            "data": outputs
+        })
 
+    with open(f"experiment_{args.note.replace(' ', '_')}.json", "w") as sink:
+        sink.write(json.dumps(experiments, indent=4))
 
 
     # references for repetition penalty https://huggingface.co/blog/how-to-generate
-    print()
+    # print()
 
 
 def get_grid():
@@ -154,6 +197,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # Load args
+    parser.add_argument("note", default='Describe experiment')
     parser.add_argument("--ckpt_path", default='checkpoint/SeqT5Mle_t5_mle')
     parser.add_argument("--data_path", default=None)
     parser.add_argument("--use_test", action='store_true')
