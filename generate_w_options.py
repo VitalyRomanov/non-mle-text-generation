@@ -116,15 +116,15 @@ def test_T5(args):
     else:
         generator_params = [{
             "temperature": args.t,
-            "top_p": args.top_p,
-            "top_k": args.top_k,
+            "top_p": args.top_p if type(args.top_p) is not str else list(map(float,args.top_p.split(","))),
+            "top_k": args.top_k if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
             "do_sample": args.do_sample,
             "max_length": args.max_length,
-            "repetition_penalty": args.repetition_penalty,
-            "num_beams": args.num_beams,
+            "repetition_penalty": args.repetition_penalty if type(args.top_p) is not str else list(map(float,args.top_p.split(","))),
+            "num_beams": args.num_beams if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
             "length_penalty": args.length_penalty,
-            "no_repeat_ngram_size": args.no_repeat_ngram_size,
-            "num_beam_groups": args.num_beam_groups,
+            "no_repeat_ngram_size": args.no_repeat_ngram_size if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
+            "num_beam_groups": args.num_beam_groups if type(args.top_p) is not str else list(map(int,args.top_p.split(","))),
             "diversity_penalty": args.diversity_penalty
         }]
 
