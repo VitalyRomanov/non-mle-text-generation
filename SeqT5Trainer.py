@@ -178,6 +178,36 @@ class SeqT5Gumbel(SeqT5RL):
         self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
                                              use_cuda=self.use_cuda)
 
+    def mle_step(self, sample, batch_i, epoch, loader_len, seq_decoding=False):
+
+        if seq_decoding:
+            print("Seq MLE Training")
+            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0,
+                                                top_p=0.6)
+        else:
+            print("MLE Training")
+            output = self.teacher_forcing_generation(sample)
+
+        loss = output["loss"]
+        # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
+
+        with torch.no_grad():
+            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train",
+                    strategy="mle"
+                )
+
+        self.g_optimizer.zero_grad()
+        loss.backward()
+        # all-reduce grads and rescale by grad_denom
+        # for p in self.generator.parameters():
+        #     if p.requires_grad:
+        #         p.grad.data.div_(sample_size)
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
+        self.g_optimizer.step()
+
     # def create_discriminator(self, args):
     #     self.discriminator = GumbelDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
     #                                           use_cuda=self.use_cuda)
