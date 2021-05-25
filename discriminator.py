@@ -161,26 +161,26 @@ class T5Discriminator(AttDiscriminator):
         self.t5_model = SeqT5_Discriminator.from_pretrained('t5-small')
 
     def get_tgt_embeddings(self, tokens):
-        return self.t5_model(tokens - 1).permute(1, 0, 2)
+        return self.t5_model(tokens - 1, return_encoder=True).permute(1, 0, 2)
 
 
 class T5SemanticDiscriminator(nn.Module):
     def __init__(self):
         super(T5SemanticDiscriminator, self).__init__()
         self.t5_model = SeqT5_Discriminator.from_pretrained('t5-small')
-        self.encoder_layer = nn.TransformerEncoderLayer(512, 1, dim_feedforward=512)
-        self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=1)
-        self.pos_encoder = PositionalEncoding(512, 0.1)
-        self.fc = nn.Linear(512, 1)
-
-        self.target_mask = self.generate_square_subsequent_mask(1)
+        # self.encoder_layer = nn.TransformerEncoderLayer(512, 1, dim_feedforward=512)
+        # self.encoder = nn.TransformerEncoder(self.encoder_layer, num_layers=1)
+        # self.pos_encoder = PositionalEncoding(512, 0.1)
+        # self.fc = nn.Linear(512, 1)
+        #
+        # self.target_mask = self.generate_square_subsequent_mask(1)
 
     def transform_for_t5(self, tensor):
         return tensor - 1
 
     def forward(self, source_ids, target_ids):
         out = self.t5_model(
-            self.transform_for_t5(source_ids), labels=self.transform_for_t5(target_ids), decoding_style="tf"
+            self.transform_for_t5(source_ids), labels=self.transform_for_t5(target_ids), return_encoder=False
         )
         # if self.target_mask.size(0) != target_emb.size(0):
         #     self.target_mask = self.generate_square_subsequent_mask(target_emb.size(0)).to(source_ids.device)
