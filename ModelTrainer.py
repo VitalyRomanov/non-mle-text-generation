@@ -219,11 +219,11 @@ class ModelTrainer:
             # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
             reward = self.discriminator(sample["net_input"]["src_tokens"], output["prediction"])
             # reward = self.discriminator(output["prediction"], output["prediction"])
-            gen_reward = (output["prediction"] == sample['target']).float()
+            # gen_reward = (output["prediction"] == sample['target']).float()
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None)) + \
-                  self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
-                                    output.get("prediction", None))
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
+                  # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
+                  #                   output.get("prediction", None))
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
