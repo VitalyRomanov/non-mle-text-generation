@@ -137,54 +137,61 @@ def test_T5(args):
         "rougeLf1": []
     }
 
-    experiments = []
-    outputs = []
+    # experiments = []
+    # outs = []
 
-    for g_params in generator_params:
-        print(g_params)
-        print("\n\n\n")
 
-        for ind, entry in tqdm.tqdm(enumerate(partition)):
-            input_ids = entry["source"] - 1
-            labels = entry["target"] - 1
 
-            outputs = model.generate(input_ids.reshape(1,-1), **g_params)[0][1:]
+    for par_ind, g_params in enumerate(generator_params):
+        output_name = f"experiment_{args.note.replace(' ', '_')}_{par_ind}.jsonl"
+        # if os.path.isfile(output_name):
+        #     raise Exception("Output file exists, change experiment note")
+        with open(output_name, "w") as sink:
+            print(g_params)
+            print("\n\n\n")
+            sink.write(f"{json.dumps(g_params)}\n")
 
-            inp = tokenizer.decode(input_ids, skip_special_tokens=True)
-            trg = tokenizer.decode(labels, skip_special_tokens=True)
-            pred = tokenizer.decode(outputs, skip_special_tokens=True)
+            for ind, entry in tqdm.tqdm(enumerate(partition)):
+                input_ids = entry["source"] - 1
+                labels = entry["target"] - 1
 
-            bleu = bleu_metric.compute(predictions=[pred], references=[[trg]]) # bleu["score"]
-            rouge = bleu_metric.compute(predictions=[pred], references=[inp]) # rouge["rougeL"].high.fmeasure
+                outputs = model.generate(input_ids.reshape(1,-1), **g_params)[0][1:]
 
-            metrics["bleu"].append(bleu["score"])
-            metrics["rouge1f1"].append(rouge["rouge1"].high.fmeasure)
-            metrics["rouge2f1"].append(rouge["rouge2"].high.fmeasure)
-            metrics["rougeLf1"].append(rouge["rougeL"].high.fmeasure)
+                inp = tokenizer.decode(input_ids, skip_special_tokens=True)
+                trg = tokenizer.decode(labels, skip_special_tokens=True)
+                pred = tokenizer.decode(outputs, skip_special_tokens=True)
 
-            outputs.append({
-                "input": inp,
-                "target": trg,
-                "output": pred,
-                "metrics": metrics
-            })
+                bleu = bleu_metric.compute(predictions=[pred], references=[[trg]]) # bleu["score"]
+                rouge = rouge_metric.compute(predictions=[pred], references=[inp]) # rouge["rougeL"].high.fmeasure
 
-            # print("s: ", tokenizer.decode(input_ids, skip_special_tokens=True))
-            # print("t: ", tokenizer.decode(labels, skip_special_tokens=True))
-            # print("g: ", tokenizer.decode(outputs, skip_special_tokens=True))
-            # print("")
+                # metrics["bleu"].append(bleu["score"])
+                # metrics["rouge1f1"].append(rouge["rouge1"].high.fmeasure)
+                # metrics["rouge2f1"].append(rouge["rouge2"].high.fmeasure)
+                # metrics["rougeLf1"].append(rouge["rougeL"].high.fmeasure)
 
-            if ind > 10 :
-                break
+                metrics = {
+                    "bleu": bleu["score"],
+                    "rouge1f1": rouge["rouge1"].high.fmeasure,
+                    "rouge2f1": rouge["rouge2"].high.fmeasure,
+                    "rougeLf1": rouge["rougeL"].high.fmeasure
+                }
 
-        experiments.append({
-            "setting": generator_params,
-            "data": outputs
-        })
+                out_entry = {
+                    "input": inp,
+                    "target": trg,
+                    "output": pred,
+                    "metrics": metrics
+                }
 
-    with open(f"experiment_{args.note.replace(' ', '_')}.json", "w") as sink:
-        sink.write(json.dumps(experiments, indent=4))
+                # print("s: ", tokenizer.decode(input_ids, skip_special_tokens=True))
+                # print("t: ", tokenizer.decode(labels, skip_special_tokens=True))
+                # print("g: ", tokenizer.decode(outputs, skip_special_tokens=True))
+                # print("")
 
+                sink.write(f"{json.dumps(out_entry)}\n")
+
+                # if ind > 10 :
+                #     break
 
     # references for repetition penalty https://huggingface.co/blog/how-to-generate
     # print()
