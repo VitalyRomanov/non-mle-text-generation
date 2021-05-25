@@ -380,10 +380,10 @@ class ModelTrainer:
                         if random.random() <= mle_frac:
                             self.mle_step(sample, i, epoch_i, len(trainloader))
                         else:
-                            if random.random() > 0.5:
-                                self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
-                            else:
-                                self.pg_step(sample, i, epoch_i, len(trainloader))
+                            # if random.random() > 0.5:
+                            #     self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
+                            # else:
+                            self.pg_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "mle":
                         self.mle_step(sample, i, epoch_i, len(trainloader))
                     elif self.training_strategy == "rl":
