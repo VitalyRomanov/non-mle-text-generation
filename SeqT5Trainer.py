@@ -91,7 +91,7 @@ class SeqT5Trainer(ModelTrainer):
         if output_tokens is not None:
             pred = output_tokens
         elif output_onehot is not None:
-            pred = output_onehot.argmax(-1)
+            pred = output_onehot.argmax(-1) - 1
         else:
             pred = logits.argmax(-1)
 
