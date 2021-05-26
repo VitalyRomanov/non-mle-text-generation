@@ -13,10 +13,13 @@ rougeL = []
 with open(path) as source:
     for line in source:
         entry = json.loads(line)
-        bleu.append(entry["metrics"]["bleu"])
-        rouge1.append(entry["metrics"]["rouge1f1"])
-        rouge2.append(entry["metrics"]["rouge2f1"])
-        rougeL.append(entry["metrics"]["rougeLf1"])
+        try:
+            bleu.append(entry["metrics"]["bleu"])
+            rouge1.append(entry["metrics"]["rouge1f1"])
+            rouge2.append(entry["metrics"]["rouge2f1"])
+            rougeL.append(entry["metrics"]["rougeLf1"])
+        except:
+            pass
 
     bleu = np.array(bleu)
     rouge1 = np.array(rouge1)
