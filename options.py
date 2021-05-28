@@ -131,6 +131,8 @@ def add_generator_model_args(parser):
                         help='reduce the proportion of teacher forcing with each epoch during training')
     parser.add_argument('--freeze_encoder', action='store_true', default=False,
                         help='Do not update weights for T5 encoder')
+    parser.add_argument('--importance-samples', default=10, type=int,
+                        help='Number of samples for estimating gradients')
     return parser
 
 def add_discriminator_model_args(parser):
