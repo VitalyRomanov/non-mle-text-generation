@@ -210,33 +210,30 @@ class ModelTrainer:
     def pg_step(self, sample, batch_i, epoch, loader_len):
         print("Policy Gradient Training")
 
+        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
+
+        with torch.no_grad():
+            # if self.sequential_decoding_style == "gumbel":
+            #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
+            # else:
+            # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
+            reward = self.discriminator(sample["net_input"]["src_tokens"], output["prediction"])
+            # reward = self.discriminator(output["prediction"], output["prediction"])
+            # gen_reward = (output["prediction"] == sample['target']).float()
+
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
+                  # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
+                  #                   output.get("prediction", None))
+
+        with torch.no_grad():
+            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
+                )
+
         self.g_optimizer.zero_grad()
-
-        for _ in range(self.args.importance_samples):
-            output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
-
-            with torch.no_grad():
-                # if self.sequential_decoding_style == "gumbel":
-                #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
-                # else:
-                # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
-                reward = self.discriminator(sample["net_input"]["src_tokens"], output["prediction"])
-                # reward = self.discriminator(output["prediction"], output["prediction"])
-                # gen_reward = (output["prediction"] == sample['target']).float()
-
-            pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
-                      # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
-                      #                   output.get("prediction", None))
-
-            with torch.no_grad():
-                if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
-                    self.evaluate_generator(
-                        sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
-                        sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
-                    )
-
-            pg_loss = pg_loss / self.args.importance_samples
-            pg_loss.backward()
+        pg_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
 
