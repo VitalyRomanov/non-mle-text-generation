@@ -152,6 +152,10 @@ def test_T5(args):
             print("\n\n\n")
             sink.write(f"{json.dumps(g_params)}\n")
 
+            if args.save_predictions_to_txt:
+                output_name_txt = output_name[:-5] + "txt"
+                out_txt = open(output_name_txt, 'w+')
+
             for ind, entry in tqdm.tqdm(enumerate(partition)):
                 input_ids = entry["source"] - 1
                 labels = entry["target"] - 1
@@ -161,6 +165,12 @@ def test_T5(args):
                 inp = tokenizer.decode(input_ids, skip_special_tokens=True)
                 trg = tokenizer.decode(labels, skip_special_tokens=True)
                 pred = tokenizer.decode(outputs, skip_special_tokens=True)
+
+                if args.save_predictions_to_txt:
+                    out_txt.write(pred + '\n')
+
+                if not args.write_to_json:
+                    continue
 
                 bleu = bleu_metric.compute(predictions=[pred], references=[[trg]]) # bleu["score"]
                 rouge = rouge_metric.compute(predictions=[pred], references=[inp]) # rouge["rougeL"].high.fmeasure
@@ -208,7 +218,7 @@ if __name__ == "__main__":
     parser.add_argument("note", default='Describe experiment')
     parser.add_argument("--ckpt_path", default='checkpoint/SeqT5Mle_t5_mle/best_gmodel.pt')
     parser.add_argument("--data_path", default=None)
-    parser.add_argument("--use_test", action='store_true')
+    parser.add_argument("--use_test", action='store_false')  # means will use test by default
     parser.add_argument("--t", default="1.")#, type=float)
     parser.add_argument("--top_p", default="0.9")#, type=float)
     parser.add_argument("--top_k", default="50")#, type=int)
@@ -221,6 +231,8 @@ if __name__ == "__main__":
     parser.add_argument("--num_beam_groups", default="1")#, type=int)
     parser.add_argument("--diversity_penalty", default=0, type=int)
     parser.add_argument("--use_parameter_grid", action='store_true')
+    parser.add_argument("--save_predictions_to_txt", action='store_false')  # means will save to txt by default
+    parser.add_argument("--write_to_json", action='store_false')  # means will write to json by default
 
     args = parser.parse_args()
 
