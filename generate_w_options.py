@@ -144,7 +144,7 @@ def test_T5(args):
 
 
     for par_ind, g_params in enumerate(generator_params):
-        output_name = f"experiment_{args.note.replace(' ', '_')}_{par_ind}.jsonl"
+        output_name = f"exp_{args.note.replace(' ', '_')}_{par_ind}.jsonl"
         # if os.path.isfile(output_name):
         #     raise Exception("Output file exists, change experiment note")
         with open(output_name, "w") as sink:
