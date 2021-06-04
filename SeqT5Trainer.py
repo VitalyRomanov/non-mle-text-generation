@@ -1,3 +1,4 @@
+import logging
 import random
 
 from torch import cuda
@@ -24,7 +25,11 @@ class SeqT5Trainer(ModelTrainer):
         from SeqT5 import SeqT5
 
         self.t5_tokenizer = T5Tokenizer.from_pretrained('t5-small')
-        self.generator = SeqT5.from_pretrained('t5-small')
+        if self.args.g_ckpt_path is not None:
+            logging.debug(f"Loading pretrained model from checkpoint {self.args.g_ckpt_path}")
+            self.generator = SeqT5.from_pretrained(self.args.g_ckpt_path)
+        else:
+            self.generator = SeqT5.from_pretrained('t5-small')
         if self.args.freeze_encoder:
             self.generator.encoder.requires_grad = False
 

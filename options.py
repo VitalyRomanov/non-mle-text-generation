@@ -133,6 +133,8 @@ def add_generator_model_args(parser):
                         help='reduce the proportion of teacher forcing with each epoch during training')
     parser.add_argument('--freeze_encoder', action='store_true', default=False,
                         help='Do not update weights for T5 encoder')
+    parser.add_argument('--g_ckpt_path', default=None, type=str,
+                        help='load pretrained checkpoint for generator from path')
     return parser
 
 def add_discriminator_model_args(parser):
