@@ -175,8 +175,9 @@ class SeqT5Gumbel(SeqT5RL):
         self.sequential_decoding_style = "gumbel"
 
     def create_discriminator(self, args):
-        self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
-                                             use_cuda=self.use_cuda)
+        # self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+        #                                      use_cuda=self.use_cuda)
+        self.discriminator = T5SemanticDiscriminator()
 
     def mle_step(self, sample, batch_i, epoch, loader_len, seq_decoding=False):
 
