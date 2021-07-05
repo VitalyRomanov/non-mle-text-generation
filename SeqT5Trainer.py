@@ -26,7 +26,7 @@ class SeqT5Trainer(ModelTrainer):
 
         self.t5_tokenizer = T5Tokenizer.from_pretrained('t5-small')
         if self.args.g_ckpt_path is not None:
-            logging.debug(f"Loading pretrained model from checkpoint {self.args.g_ckpt_path}")
+            print(f"Loading pretrained generator from checkpoint {self.args.g_ckpt_path}")
             self.generator = SeqT5.from_pretrained(self.args.g_ckpt_path)
         else:
             self.generator = SeqT5.from_pretrained('t5-small')
@@ -35,7 +35,11 @@ class SeqT5Trainer(ModelTrainer):
 
     def create_discriminator(self, args):
         # raise NotImplementedError()
-        self.discriminator = AttDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
+        if self.args.d_ckpt_path is not None:
+            logging.debug(f"Loading pretrained discriminator from checkpoint {self.args.d_ckpt_path}")
+            self.discriminator = torch.load(self.args.d_ckpt_path)
+        else:
+            self.discriminator = AttDiscriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
                                               use_cuda=self.use_cuda)
         print("Discriminator loaded successfully!")
 
@@ -170,7 +174,11 @@ class SeqT5RL(SeqT5Trainer):
     def create_discriminator(self, args):
         # self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
         #                                      use_cuda=self.use_cuda)
-        self.discriminator = T5SemanticDiscriminator()
+        if self.args.d_ckpt_path is not None:
+            print(f"Loading pretrained discriminator from checkpoint {self.args.d_ckpt_path}")
+            self.discriminator = torch.load(self.args.d_ckpt_path)
+        else:
+            self.discriminator = T5SemanticDiscriminator()
 
 
 class SeqT5Gumbel(SeqT5RL):
@@ -182,7 +190,11 @@ class SeqT5Gumbel(SeqT5RL):
     def create_discriminator(self, args):
         # self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
         #                                      use_cuda=self.use_cuda)
-        self.discriminator = T5SemanticDiscriminator()
+        if self.args.d_ckpt_path is not None:
+            print(f"Loading pretrained discriminator from checkpoint {self.args.d_ckpt_path}")
+            self.discriminator = torch.load(self.args.d_ckpt_path)
+        else:
+            self.discriminator = T5SemanticDiscriminator()
 
     def mle_step(self, sample, batch_i, epoch, loader_len, seq_decoding=False):
 

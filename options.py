@@ -135,6 +135,8 @@ def add_generator_model_args(parser):
                         help='Do not update weights for T5 encoder')
     parser.add_argument('--g_ckpt_path', default=None, type=str,
                         help='load pretrained checkpoint for generator from path')
+    parser.add_argument('--d_ckpt_path', default=None, type=str,
+                        help='load pretrained checkpoint for discriminator from path')
     return parser
 
 def add_discriminator_model_args(parser):

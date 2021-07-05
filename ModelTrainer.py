@@ -552,38 +552,6 @@ class ModelTrainer:
 
             max_positions_train = (args.fixed_max_len, args.fixed_max_len)
 
-            # Initialize dataloader, starting at batch_offset
-            trainloader = self.dataset.train_dataloader(
-                'train',
-                max_tokens=args.max_tokens,
-                max_sentences=args.joint_batch_size,
-                max_positions=max_positions_train,
-                seed=seed,
-                epoch=epoch_i,
-                sample_without_replacement=args.sample_without_replacement,
-                sort_by_source_size=(epoch_i <= args.curriculum),
-                shard_id=args.distributed_rank,
-                num_shards=args.distributed_world_size,
-            )
-
-            # reset meters
-            for key, val in self.g_logging_meters.items():
-                if val is not None:
-                    val.reset()
-            for key, val in self.d_logging_meters.items():
-                if val is not None:
-                    val.reset()
-
-            # set training mode
-            self.generator.train()
-            if hasattr(self, "discriminator"):
-                self.discriminator.train()
-            # update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
-
-            print(f"Training batches: {len(trainloader)}")
-
-            num_update = self.train_loop(trainloader, epoch_i, num_update)
-
             # validation
             # set validation mode
             self.generator.eval()
@@ -615,6 +583,38 @@ class ModelTrainer:
             print(f"Validation batches: {len(valloader)}")
 
             self.eval_loop(valloader, epoch_i)
+
+            # Initialize dataloader, starting at batch_offset
+            trainloader = self.dataset.train_dataloader(
+                'train',
+                max_tokens=args.max_tokens,
+                max_sentences=args.joint_batch_size,
+                max_positions=max_positions_train,
+                seed=seed,
+                epoch=epoch_i,
+                sample_without_replacement=args.sample_without_replacement,
+                sort_by_source_size=(epoch_i <= args.curriculum),
+                shard_id=args.distributed_rank,
+                num_shards=args.distributed_world_size,
+            )
+
+            # reset meters
+            for key, val in self.g_logging_meters.items():
+                if val is not None:
+                    val.reset()
+            for key, val in self.d_logging_meters.items():
+                if val is not None:
+                    val.reset()
+
+            # set training mode
+            self.generator.train()
+            if hasattr(self, "discriminator"):
+                self.discriminator.train()
+            # update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
+
+            print(f"Training batches: {len(trainloader)}")
+
+            num_update = self.train_loop(trainloader, epoch_i, num_update)
 
             self.save_models(epoch_i)
 
