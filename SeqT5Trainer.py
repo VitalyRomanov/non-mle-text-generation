@@ -7,7 +7,7 @@ from torch.autograd import Variable
 import utils
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
-from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator, T5SemanticDiscriminator
+from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator, T5SemanticDiscriminator, BleurtDiscriminator
 
 
 class SeqT5Trainer(ModelTrainer):
@@ -179,6 +179,84 @@ class SeqT5RL(SeqT5Trainer):
             self.discriminator = torch.load(self.args.d_ckpt_path)
         else:
             self.discriminator = T5SemanticDiscriminator()
+
+
+class SeqT5Bleurt(SeqT5Trainer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.training_strategy = "alternate"  # alternate | mle | rl
+        self.sequential_decoding_style = "rl"
+
+    def create_discriminator(self, args):
+        if self.args.d_ckpt_path is not None:
+            print(f"Loading pretrained discriminator from checkpoint {self.args.d_ckpt_path}")
+            self.discriminator = torch.load(self.args.d_ckpt_path)
+        else:
+            self.discriminator = BleurtDiscriminator(decode_fn = lambda pred: self.decode_sentences(pred))
+
+    def train_loop(self, trainloader, epoch_i, num_update):
+        for i, sample in enumerate(trainloader):
+
+            sample = self.format_sample(sample)
+
+            if self.use_cuda:
+                # wrap input tensors in cuda tensors
+                sample = utils.make_variable(sample, cuda=cuda)
+
+            if self.args.reduce_tf_frac:
+                mle_frac = max(self.args.epochs - epoch_i, 1) / self.args.epochs
+            else:
+                mle_frac = 0.5
+
+            if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
+                if hasattr(self, "discriminator"):
+                    if self.training_strategy == "alternate":
+                        if random.random() <= mle_frac:
+                            self.mle_step(sample, i, epoch_i, len(trainloader))
+                        else:
+                            # if random.random() > 0.5:
+                            #     self.mle_step(sample, i, epoch_i, len(trainloader), seq_decoding=True)
+                            # else:
+                            self.pg_step(sample, i, epoch_i, len(trainloader))
+                    elif self.training_strategy == "mle":
+                        self.mle_step(sample, i, epoch_i, len(trainloader))
+                    elif self.training_strategy == "rl":
+                        self.pg_step(sample, i, epoch_i, len(trainloader))
+                    else:
+                        raise ValueError(
+                            f"Invalid training strategy: {self.training_strategy}. Valid options are: alternate|mle|rl.")
+                else:
+                    self.mle_step(sample, i, epoch_i, len(trainloader))
+                num_update += 1
+            else:
+                if i == 0 and epoch_i == 1:
+                    print(f"Pretraining discriminator for {self.args.discriminator_pretraining} epochs")
+
+        return num_update
+
+    def pg_step(self, sample, batch_i, epoch, loader_len):
+        print("Policy Gradient Training")
+
+        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
+
+        with torch.no_grad():
+            reward = self.discriminator(output["prediction"], sample["target"]) # dim (bsize x 1)
+
+        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
+        # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
+        #                   output.get("prediction", None))
+
+        with torch.no_grad():
+            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
+                )
+
+        self.g_optimizer.zero_grad()
+        pg_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
+        self.g_optimizer.step()
 
 
 class SeqT5Gumbel(SeqT5RL):

@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from SeqT5 import SeqT5_Discriminator
+from bleurt import score as bleurt_score
 
 
 # class AttDiscriminator(nn.Module):
@@ -245,6 +246,19 @@ class GumbelDiscriminator(nn.Module):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
         return mask
+
+
+class BleurtDiscriminator(nn.Module):
+    def __init__(self, decode_fn):
+        super(BleurtDiscriminator, self).__init__()
+        checkpoint = "bleurt/bleurt-base-128"
+        self.scorer = bleurt_score.BleurtScorer(checkpoint)
+        self.decode_fn = decode_fn
+
+    def forward(self, prediction, target):
+        candidates, references = self.decode_fn(prediction), self.decode_fn(target)
+        scores = self.scorer.score(references=references, candidates=candidates)
+        return scores
 
 
 class Discriminator(nn.Module):
