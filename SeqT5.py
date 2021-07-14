@@ -590,7 +590,7 @@ class SeqT5(T5ForConditionalGeneration):
             lm_logits = checkpoint.checkpoint(self.seq_make_step(return_dict=True, use_cache=use_cache), decoder_attention_mask, decoder_inputs_embeds, past_key_values, hidden_states, attention_mask,
                          decoder_head_mask, head_mask, output_attentions, output_hidden_states, dummy_tensor)
 
-            last_token_logits = lm_logits[:, -1, :]
+            last_token_logits = lm_logits[:, -1, :] / temperature
             last_token_logits_filtered = top_k_top_p_filtering(last_token_logits, top_k=top_k, top_p=top_p)
 
             last_token_logits = torch.log(torch.nn.functional.softmax(last_token_logits, dim=-1) * epsilon + torch.nn.functional.softmax(last_token_logits_filtered, dim=-1) * (1. - epsilon))
@@ -600,7 +600,7 @@ class SeqT5(T5ForConditionalGeneration):
             modified_logits.append(last_token_logits.unsqueeze(1))
 
             one_hot_softmax = nn.functional.gumbel_softmax(
-                last_token_logits, tau=temperature, hard=True
+                last_token_logits, tau=0.0001, hard=True
             )
 
             output_onehot.append(one_hot_softmax.unsqueeze(1))

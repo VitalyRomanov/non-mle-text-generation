@@ -226,7 +226,7 @@ class ModelTrainer:
                   #                   output.get("prediction", None))
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
+            if (batch_i + (epoch - 1) * loader_len) % min(self.args.train_bleu_every, loader_len) == 0:
                 self.evaluate_generator(
                     sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
@@ -458,6 +458,14 @@ class ModelTrainer:
 
         sample_size = targets.size(0) if self.args.sentence_avg else ntokens
 
+        if hasattr(self, "discriminator"):
+            with torch.no_grad():
+                discr_score_neg = self.discriminator(original, predictions).mean()
+                discr_score_pos = self.discriminator(original, targets).mean()
+        else:
+            discr_score_neg = 0.
+            discr_score_pos = 0.
+
         gen_acc = self.token_accuracy(predictions, targets, target_mask)
         bleu = self.compute_bleu(predictions, targets, accumulate=accumulate)
         rouge = self.compute_rouge(predictions, original, accumulate=accumulate)
@@ -492,6 +500,8 @@ class ModelTrainer:
                 f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision,
                 f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision,
                 f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision,
+                f"discr_score/{partition}/negative": discr_score_neg,
+                f"discr_score/{partition}/positive": discr_score_pos,
             }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents)
 
     def evaluate_discriminator(self, d_loss, d_acc, batch_i, epoch_i, num_batches, partition=None):
@@ -511,7 +521,7 @@ class ModelTrainer:
     def eval_generation(self, sample):
         return self.teacher_forcing_generation(sample)
 
-    def eval_loop(self, valloader, epoch_i):
+    def eval_loop(self, valloader, epoch_i, force=False):
         for i, sample in enumerate(valloader):
 
             sample = self.format_sample(sample, extra_tokens=50)
@@ -521,7 +531,7 @@ class ModelTrainer:
                     # wrap input tensors in cuda tensors
                     sample = utils.make_variable(sample, cuda=cuda)
 
-                if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
+                if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator") or force is True:
                     # generator validation
                     output = self.eval_generation(sample)
                     self.evaluate_generator(
@@ -536,6 +546,38 @@ class ModelTrainer:
                         d_loss, acc, batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid"
                     )
 
+    def validate(self, args, epoch_i, force=False):
+        # validation
+        # set validation mode
+        self.generator.eval()
+        if hasattr(self, "discriminator"):
+            self.discriminator.eval()
+        # Initialize dataloader
+        max_positions_valid = (args.fixed_max_len, args.fixed_max_len)
+        valloader = self.dataset.eval_dataloader(
+            'valid',
+            max_tokens=args.max_tokens,
+            max_sentences=args.joint_batch_size,
+            max_positions=max_positions_valid,
+            skip_invalid_size_inputs_valid_test=True,
+            descending=True,  # largest batch first to warm the caching allocator
+            shard_id=args.distributed_rank,
+            num_shards=args.distributed_world_size,
+            seed=args.seed,  # keep this constant
+            sample_without_replacement=args.sample_val_without_replacement
+        )
+
+        # reset meters
+        for key, val in self.g_logging_meters.items():
+            if val is not None:
+                val.reset()
+        for key, val in self.d_logging_meters.items():
+            if val is not None:
+                val.reset()
+
+        print(f"Validation batches: {len(valloader)}")
+
+        self.eval_loop(valloader, epoch_i, force=force)
 
     def train(self):
         args = self.args
@@ -543,6 +585,9 @@ class ModelTrainer:
         # start joint training
         best_dev_loss = math.inf
         num_update = 0
+
+        self.validate(args, epoch_i=0, force=True)
+
         # main training loop
         for epoch_i in range(1, args.epochs + 1):
             logging.info("At {0}-th epoch.".format(epoch_i))
@@ -551,38 +596,6 @@ class ModelTrainer:
             torch.manual_seed(seed)
 
             max_positions_train = (args.fixed_max_len, args.fixed_max_len)
-
-            # validation
-            # set validation mode
-            self.generator.eval()
-            if hasattr(self, "discriminator"):
-                self.discriminator.eval()
-            # Initialize dataloader
-            max_positions_valid = (args.fixed_max_len, args.fixed_max_len)
-            valloader = self.dataset.eval_dataloader(
-                'valid',
-                max_tokens=args.max_tokens,
-                max_sentences=args.joint_batch_size,
-                max_positions=max_positions_valid,
-                skip_invalid_size_inputs_valid_test=True,
-                descending=True,  # largest batch first to warm the caching allocator
-                shard_id=args.distributed_rank,
-                num_shards=args.distributed_world_size,
-                seed=args.seed, # keep this constant
-                sample_without_replacement=args.sample_val_without_replacement
-            )
-
-            # reset meters
-            for key, val in self.g_logging_meters.items():
-                if val is not None:
-                    val.reset()
-            for key, val in self.d_logging_meters.items():
-                if val is not None:
-                    val.reset()
-
-            print(f"Validation batches: {len(valloader)}")
-
-            self.eval_loop(valloader, epoch_i)
 
             # Initialize dataloader, starting at batch_offset
             trainloader = self.dataset.train_dataloader(
@@ -615,6 +628,8 @@ class ModelTrainer:
             print(f"Training batches: {len(trainloader)}")
 
             num_update = self.train_loop(trainloader, epoch_i, num_update)
+
+            self.validate(args, epoch_i)
 
             self.save_models(epoch_i)
 

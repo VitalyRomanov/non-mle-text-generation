@@ -163,6 +163,7 @@ class SeqT5Mle(SeqT5Trainer):
         pass
         # self.discriminator = T5Discriminator(args, self.dataset.src_dict, self.dataset.dst_dict,
         #                                      use_cuda=self.use_cuda)
+        self.discriminator = T5SemanticDiscriminator()
 
 
 class SeqT5RL(SeqT5Trainer):
