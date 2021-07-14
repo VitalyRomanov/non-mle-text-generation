@@ -258,7 +258,7 @@ class BleurtDiscriminator(nn.Module):
     def forward(self, prediction, target):
         candidates, references = self.decode_fn(prediction), self.decode_fn(target)
         scores = self.scorer.score(references=references, candidates=candidates)
-        return scores
+        return torch.Tensor(scores).reshape(-1,1)
 
 
 class Discriminator(nn.Module):

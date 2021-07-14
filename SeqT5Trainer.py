@@ -195,6 +195,13 @@ class SeqT5Bleurt(SeqT5Trainer):
         else:
             self.discriminator = BleurtDiscriminator(decode_fn = lambda pred: self.decode_sentences(pred))
 
+    def create_optimizers(self, args):
+        # define optimizer
+        self.g_optimizer = eval("torch.optim." + args.g_optimizer)(filter(lambda x: x.requires_grad,
+                                                                          self.generator.parameters()),
+                                                                   args.g_learning_rate)
+        self.d_optimizer = None
+
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
 
@@ -235,6 +242,24 @@ class SeqT5Bleurt(SeqT5Trainer):
 
         return num_update
 
+    def eval_loop(self, valloader, epoch_i, force=False):
+        for i, sample in enumerate(valloader):
+
+            sample = self.format_sample(sample, extra_tokens=50)
+
+            with torch.no_grad():
+                if self.use_cuda:
+                    # wrap input tensors in cuda tensors
+                    sample = utils.make_variable(sample, cuda=cuda)
+
+                if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator") or force is True:
+                    # generator validation
+                    output = self.eval_generation(sample)
+                    self.evaluate_generator(
+                        sample["net_input"]["src_tokens"], output["prediction"], output["target"], output["mask"], output["loss"], ntokens=sample["ntokens"],
+                        batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle", accumulate=i<len(valloader)-1, write_sents=True
+                    )
+
     def pg_step(self, sample, batch_i, epoch, loader_len):
         print("Policy Gradient Training")
 
@@ -258,6 +283,62 @@ class SeqT5Bleurt(SeqT5Trainer):
         pg_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
+
+    def evaluate_generator(
+            self, original, predictions, targets, target_mask, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
+            strategy=None, accumulate=False, write_sents=False
+    ):
+
+        assert partition in {"train", "valid", "test"}
+        assert strategy in {"mle", "rl", "gumbel"}
+
+        sample_size = targets.size(0) if self.args.sentence_avg else ntokens
+
+        if hasattr(self, "discriminator"):
+            with torch.no_grad():
+                discr_score_neg = self.discriminator(predictions, targets).mean()
+                discr_score_pos = self.discriminator(targets, targets).mean()
+        else:
+            discr_score_neg = 0.
+            discr_score_pos = 0.
+
+        gen_acc = self.token_accuracy(predictions, targets, target_mask)
+        bleu = self.compute_bleu(predictions, targets, accumulate=accumulate)
+        rouge = self.compute_rouge(predictions, original, accumulate=accumulate)
+
+        self.g_logging_meters[f'{partition}_loss'].update(loss, sample_size)
+        self.g_logging_meters[f'{partition}_acc'].update(gen_acc)
+        # self.d_logging_meters[f'{partition}_bleu'].update(bleu)
+        # self.d_logging_meters[f'{partition}_rouge'].update(rouge)
+
+        logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
+                      f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
+
+        if not hasattr(self, "last_sents"):
+            self.last_sents = []
+        for sent in self.decode_sentences(predictions):
+            if len(self.last_sents) >= self.args.gen_sents_in_tb:
+                self.last_sents.pop(0)
+            self.last_sents.append(sent)
+
+        if not accumulate:
+            self.write_summary({
+                f"Loss/{partition}/{strategy}/gen": loss,
+                f"Accuracy/{partition}/gen": gen_acc,
+                f"bleu/{partition}/score": bleu["score"],
+                f"bleu/{partition}/P1": bleu["precisions"][0],
+                f"bleu/{partition}/P2": bleu["precisions"][1],
+                f"bleu/{partition}/P3": bleu["precisions"][2],
+                f"bleu/{partition}/P4": bleu["precisions"][3],
+                f"rouge/{partition}/rouge1/high/f1": rouge["rouge1"].high.fmeasure,
+                f"rouge/{partition}/rouge2/high/f1": rouge["rouge2"].high.fmeasure,
+                f"rouge/{partition}/rougeL/high/f1": rouge["rougeL"].high.fmeasure,
+                f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision,
+                f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision,
+                f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision,
+                f"discr_score/{partition}/negative": discr_score_neg,
+                f"discr_score/{partition}/positive": discr_score_pos,
+            }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents)
 
 
 class SeqT5Gumbel(SeqT5RL):

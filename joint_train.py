@@ -138,7 +138,7 @@ if __name__ == "__main__":
     elif model_name == "t5gumbel":
         trainer = SeqT5Gumbel(options)
     elif model_name == "t5bleurt":
-        trainer = SeqT5Bleurt
+        trainer = SeqT5Bleurt(options)
     else:
         raise ValueError("Choose appropriate model")
     trainer.train()
