@@ -226,7 +226,7 @@ class ModelTrainer:
                   #                   output.get("prediction", None))
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
+            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
                 self.evaluate_generator(
                     sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
@@ -280,7 +280,7 @@ class ModelTrainer:
         # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
+            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
                 self.evaluate_generator(
                     sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
@@ -340,7 +340,7 @@ class ModelTrainer:
         d_loss, acc = self.discrimnator_loss_acc(sample)
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % 20 == 0:
+            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
                 self.evaluate_discriminator(
                     d_loss, acc, batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train"
                 )
@@ -552,38 +552,6 @@ class ModelTrainer:
 
             max_positions_train = (args.fixed_max_len, args.fixed_max_len)
 
-            # Initialize dataloader, starting at batch_offset
-            trainloader = self.dataset.train_dataloader(
-                'train',
-                max_tokens=args.max_tokens,
-                max_sentences=args.joint_batch_size,
-                max_positions=max_positions_train,
-                seed=seed,
-                epoch=epoch_i,
-                sample_without_replacement=args.sample_without_replacement,
-                sort_by_source_size=(epoch_i <= args.curriculum),
-                shard_id=args.distributed_rank,
-                num_shards=args.distributed_world_size,
-            )
-
-            # reset meters
-            for key, val in self.g_logging_meters.items():
-                if val is not None:
-                    val.reset()
-            for key, val in self.d_logging_meters.items():
-                if val is not None:
-                    val.reset()
-
-            # set training mode
-            self.generator.train()
-            if hasattr(self, "discriminator"):
-                self.discriminator.train()
-            # update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
-
-            print(f"Training batches: {len(trainloader)}")
-
-            num_update = self.train_loop(trainloader, epoch_i, num_update)
-
             # validation
             # set validation mode
             self.generator.eval()
@@ -615,6 +583,38 @@ class ModelTrainer:
             print(f"Validation batches: {len(valloader)}")
 
             self.eval_loop(valloader, epoch_i)
+
+            # Initialize dataloader, starting at batch_offset
+            trainloader = self.dataset.train_dataloader(
+                'train',
+                max_tokens=args.max_tokens,
+                max_sentences=args.joint_batch_size,
+                max_positions=max_positions_train,
+                seed=seed,
+                epoch=epoch_i,
+                sample_without_replacement=args.sample_without_replacement,
+                sort_by_source_size=(epoch_i <= args.curriculum),
+                shard_id=args.distributed_rank,
+                num_shards=args.distributed_world_size,
+            )
+
+            # reset meters
+            for key, val in self.g_logging_meters.items():
+                if val is not None:
+                    val.reset()
+            for key, val in self.d_logging_meters.items():
+                if val is not None:
+                    val.reset()
+
+            # set training mode
+            self.generator.train()
+            if hasattr(self, "discriminator"):
+                self.discriminator.train()
+            # update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
+
+            print(f"Training batches: {len(trainloader)}")
+
+            num_update = self.train_loop(trainloader, epoch_i, num_update)
 
             self.save_models(epoch_i)
 

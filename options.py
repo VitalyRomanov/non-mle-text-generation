@@ -33,6 +33,8 @@ def add_dataset_args(parser):
                        help='maximum number of sentences in a batch')
     parser.add_argument('--joint-batch-size', type=int, default=32, metavar='N',
                         help='batch size for joint training')
+    parser.add_argument('--train-bleu-every', type=int, default=2000,
+                        help='evaluate train bleu every N batches')
     parser.add_argument('--prepare-dis-batch-size', type=int, default=128, metavar='N',
                         help='batch size for preparing discriminator training')
 
@@ -131,6 +133,10 @@ def add_generator_model_args(parser):
                         help='reduce the proportion of teacher forcing with each epoch during training')
     parser.add_argument('--freeze_encoder', action='store_true', default=False,
                         help='Do not update weights for T5 encoder')
+    parser.add_argument('--g_ckpt_path', default=None, type=str,
+                        help='load pretrained checkpoint for generator from path')
+    parser.add_argument('--d_ckpt_path', default=None, type=str,
+                        help='load pretrained checkpoint for discriminator from path')
     return parser
 
 def add_discriminator_model_args(parser):
