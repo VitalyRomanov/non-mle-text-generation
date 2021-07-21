@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from SeqT5 import SeqT5_Discriminator
-from bleurt import score as bleurt_score
 
 
 # class AttDiscriminator(nn.Module):
@@ -250,6 +249,16 @@ class GumbelDiscriminator(nn.Module):
 
 class BleurtDiscriminator(nn.Module):
     def __init__(self, decode_fn):
+        import tensorflow as tf
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+        if gpus:
+            try:
+                for gpu in gpus:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+
+            except RuntimeError as e:
+                print(e)
+        from bleurt import score as bleurt_score
         super(BleurtDiscriminator, self).__init__()
         checkpoint = "bleurt/bleurt-base-128"
         self.scorer = bleurt_score.BleurtScorer(checkpoint)

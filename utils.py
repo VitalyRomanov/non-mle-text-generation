@@ -16,7 +16,7 @@ from torch.autograd import Variable
 from torch.serialization import default_restore_location
 
 
-def make_variable(sample, cuda=False):
+def make_variable(sample, cuda=False, gpu_id=None):
     """Wrap input tensors in Variable class."""
 
     if len(sample) == 0:
@@ -25,7 +25,10 @@ def make_variable(sample, cuda=False):
     def _make_variable(maybe_tensor):
         if torch.is_tensor(maybe_tensor):
             if cuda and torch.cuda.is_available():
-                maybe_tensor = maybe_tensor.cuda()
+                if gpu_id is not None:
+                    maybe_tensor = maybe_tensor.cuda(gpu_id)
+                else:
+                    maybe_tensor = maybe_tensor.cuda()
                 return Variable(maybe_tensor)
             else:
                 return Variable(maybe_tensor)

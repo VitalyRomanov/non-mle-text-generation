@@ -8,6 +8,8 @@ import utils
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
 from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator, T5SemanticDiscriminator, BleurtDiscriminator
+import os
+import json
 
 
 class SeqT5Trainer(ModelTrainer):
@@ -209,7 +211,7 @@ class SeqT5Bleurt(SeqT5Trainer):
 
             if self.use_cuda:
                 # wrap input tensors in cuda tensors
-                sample = utils.make_variable(sample, cuda=cuda)
+                sample = utils.make_variable(sample, cuda=cuda, gpu_id=f'cuda:{self.args.gpuid[0]}')
 
             if self.args.reduce_tf_frac:
                 mle_frac = max(self.args.epochs - epoch_i, 1) / self.args.epochs
@@ -250,7 +252,7 @@ class SeqT5Bleurt(SeqT5Trainer):
             with torch.no_grad():
                 if self.use_cuda:
                     # wrap input tensors in cuda tensors
-                    sample = utils.make_variable(sample, cuda=cuda)
+                    sample = utils.make_variable(sample, cuda=cuda, gpu_id=f'cuda:{self.args.gpuid[0]}')
 
                 if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator") or force is True:
                     # generator validation
@@ -261,12 +263,13 @@ class SeqT5Bleurt(SeqT5Trainer):
                     )
 
     def pg_step(self, sample, batch_i, epoch, loader_len):
-        print("Policy Gradient Training")
+        # print("Policy Gradient Training")
 
         output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
 
         with torch.no_grad():
             reward = self.discriminator(output["prediction"], sample["target"]) # dim (bsize x 1)
+            reward = reward.cuda(f'cuda:{self.args.gpuid[0]}')
 
         pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
         # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
@@ -339,6 +342,29 @@ class SeqT5Bleurt(SeqT5Trainer):
                 f"discr_score/{partition}/negative": discr_score_neg,
                 f"discr_score/{partition}/positive": discr_score_pos,
             }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents)
+
+    def create_models(self, args):
+        self.create_generator(args)
+        self.create_discriminator(args)
+
+        if self.use_cuda:
+            # if torch.cuda.device_count() > 1:
+            #     self.discriminator = torch.nn.DataParallel(self.discriminator).cuda()
+            #     self.generator = torch.nn.DataParallel(self.generator).cuda()
+            # else:
+            # self.generator.cuda()
+            self.generator.cuda(f'cuda:{self.args.gpuid[0]}')  # manually placing generator to the specified gpu
+            if hasattr(self, "discriminator"):
+                self.discriminator.cuda(f'cuda:{cuda.device_count() - 1 - self.args.gpuid[0]}')  # selects other gpu
+        else:
+            if hasattr(self, "discriminator"):
+                self.discriminator.cpu()
+            self.generator.cpu()
+
+    def save_models(self, epoch_i):
+        self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_gen.pt"))
+        with open(os.path.join(self.checkpoints_path, "params.json"), "w") as paramsink:
+            paramsink.write(json.dumps(self.args.__dict__, indent=4))
 
 
 class SeqT5Gumbel(SeqT5RL):
