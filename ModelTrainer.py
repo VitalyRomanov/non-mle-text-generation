@@ -218,6 +218,9 @@ class ModelTrainer:
             # else:
             # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
             reward = self.discriminator(sample["net_input"]["src_tokens"], output["prediction"])
+            prev_step = torch.roll(reward, 1, dims=1)
+            prev_step[:, 0] = 0.5
+            reward = reward - prev_step
             # reward = self.discriminator(output["prediction"], output["prediction"])
             # gen_reward = (output["prediction"] == sample['target']).float()
 
@@ -586,11 +589,12 @@ class ModelTrainer:
         best_dev_loss = math.inf
         num_update = 0
 
-        self.validate(args, epoch_i=0, force=True)
+        if self.args.start_epoch == 1:
+            self.validate(args, epoch_i=0, force=True)
 
         # main training loop
-        for epoch_i in range(1, args.epochs + 1):
-            logging.info("At {0}-th epoch.".format(epoch_i))
+        for epoch_i in range(self.args.start_epoch, args.epochs + 1):
+            logging.info(f"At {epoch_i}-th epoch.")
 
             seed = args.seed + epoch_i
             torch.manual_seed(seed)
