@@ -86,6 +86,5 @@ bleurt_torch_score = bleurt_model(torch.from_numpy(input_ids),
 
 print(bleurt_torch_score)
 
-torch.save(bleurt_model.state_dict(), "bleurt/bleurt_torch.pb")
-
+# torch.save(bleurt_model.state_dict(), "bleurt/bleurt-base-128-torch.pb")
 
