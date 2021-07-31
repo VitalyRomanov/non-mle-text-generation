@@ -80,11 +80,25 @@ input_ids, input_mask, segment_ids = bleurt.encoding.encode_batch(
     references, candidates, tokenizer, max_seq_length)
 
 ## this is the answer that the pytorch model gives
-bleurt_torch_score = bleurt_model(torch.from_numpy(input_ids),
-             torch.from_numpy(input_mask),
-             torch.from_numpy(segment_ids))
+bleurt_torch_score = bleurt_model(input_ids = torch.from_numpy(input_ids),
+                                  input_mask = torch.from_numpy(input_mask),
+                                  segment_ids = torch.from_numpy(segment_ids))
 
 print(bleurt_torch_score)
 
 # torch.save(bleurt_model.state_dict(), "bleurt/bleurt-base-128-torch.pb")
 
+# usage example
+checkpoint = "bleurt/bleurt-base-128-torch.pb"
+config = transformers.BertConfig()
+restored_bleurt_model = BleurtModel(config)
+restored_bleurt_model.load_state_dict(torch.load(checkpoint))
+for param in restored_bleurt_model.parameters():
+    param.requires_grad = False
+restored_bleurt_model.eval()
+
+restored_bleurt_torch_score = restored_bleurt_model(input_ids = torch.from_numpy(input_ids),
+                                                    input_mask = torch.from_numpy(input_mask),
+                                                    segment_ids = torch.from_numpy(segment_ids))
+
+print(restored_bleurt_torch_score)
