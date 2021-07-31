@@ -1085,6 +1085,88 @@ class SeqT5_Discriminator(SeqT5):
             return logits
 
 
+class SeqEmbT5(SeqT5):
+    def __init__(self, config, out_dim=512):
+        super(SeqEmbT5, self).__init__(config)
+        if out_dim is None:
+            out_dim = config.d_model
+        self.out_dim = out_dim
+        self.start_token = torch.nn.Parameter(torch.randn(1, out_dim))
+        self.emb_head = nn.Linear(config.d_model, out_dim, bias=False)
+
+    def compute_logits(self, decoder_output):
+        sequence_output = decoder_output[0]
+
+        # Set device for model parallelism
+        if self.model_parallel:
+            torch.cuda.set_device(self.encoder.first_device)
+            self.lm_head = self.lm_head.to(self.encoder.first_device)
+            sequence_output = sequence_output.to(self.lm_head.weight.device)
+
+        if self.config.tie_word_embeddings:
+            # Rescale output before projecting on vocab
+            # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
+            sequence_output = sequence_output * (self.model_dim ** -0.5)
+
+        lm_logits = self.emb_head(sequence_output)
+
+        return lm_logits
+
+    def top_p_decode(
+            self, decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+            hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+            output_hidden_states, return_dict, temperature=1., top_k=0, top_p=1., epsilon=0.
+    ):
+        """
+        Decode with top p gradual sampling for RL objective
+        """
+        decoder_inputs_embeds = None
+        modified_logits = []
+        output_logits = []
+        output_tokens = []
+        batch_size, seq_len = decoder_input_ids.shape[:2]
+        for tok_ind in range(seq_len):
+            if tok_ind == 0:
+                decoder_inputs_embeds = self.start_token.repeat(batch_size, 1).to(decoder_input_ids.device)
+            else:
+                decoder_inputs_embeds = torch.cat([
+                    decoder_inputs_embeds, next_emb
+                ], dim=1)
+
+            dummy_tensor = torch.ones(1, dtype=torch.float32, requires_grad=True)
+            out_embs = checkpoint.checkpoint(self.seq_make_step(return_dict=True, use_cache=use_cache),
+                                              decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+                                              hidden_states, attention_mask,
+                                              decoder_head_mask, head_mask, output_attentions, output_hidden_states,
+                                              dummy_tensor)
+
+            next_emb = out_embs[:, -1, :]
+
+            output_tokens.append(torch.ones(batch_size, 1))
+
+        with torch.no_grad():
+            decoder_outputs = self.decoder(
+                input_ids=None,  # decoder_input_ids,
+                attention_mask=decoder_attention_mask,
+                inputs_embeds=decoder_inputs_embeds,
+                past_key_values=past_key_values,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                head_mask=decoder_head_mask,
+                encoder_head_mask=head_mask,
+                use_cache=use_cache,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+
+        output_logits = torch.cat(output_logits, dim=1)
+        modified_logits = torch.cat(modified_logits, dim=1)
+        output_tokens = torch.cat(output_tokens, dim=1)
+
+        return decoder_outputs, output_logits, output_tokens, modified_logits
+
+
 def test_T5():
     from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Config
 

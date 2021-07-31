@@ -367,6 +367,52 @@ class SeqT5Bleurt(SeqT5Trainer):
             paramsink.write(json.dumps(self.args.__dict__, indent=4))
 
 
+class SeqEmbT5Bleurt(SeqT5Bleurt):
+    def __init__(self, *args, **kwargs):
+        super(SeqEmbT5Bleurt, self).__init__(*args, **kwargs)
+
+    def create_generator(self, args):
+        from transformers import T5Tokenizer
+        from SeqT5 import SeqEmbT5
+
+        self.t5_tokenizer = T5Tokenizer.from_pretrained('t5-small')
+        if self.args.g_ckpt_path is not None:
+            print(f"Loading pretrained generator from checkpoint {self.args.g_ckpt_path}")
+            self.generator = SeqEmbT5.from_pretrained(self.args.g_ckpt_path)
+        else:
+            self.generator = SeqEmbT5.from_pretrained('t5-small')
+        if self.args.freeze_encoder:
+            self.generator.encoder.requires_grad = False
+
+
+    def train_loop(self, trainloader, epoch_i, num_update):
+        for i, sample in enumerate(trainloader):
+
+            sample = self.format_sample(sample)
+
+            if self.use_cuda:
+                # wrap input tensors in cuda tensors
+                sample = utils.make_variable(sample, cuda=cuda)
+
+            if self.args.reduce_tf_frac:
+                mle_frac = max(self.args.epochs - epoch_i, 1) / self.args.epochs
+            else:
+                mle_frac = 0.5
+
+            if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator"):
+                if hasattr(self, "discriminator"):
+                    self.pg_step(sample, i, epoch_i, len(trainloader))
+                else:
+                    self.mle_step(sample, i, epoch_i, len(trainloader))
+                num_update += 1
+            else:
+                if i == 0 and epoch_i == 1:
+                    print(f"Pretraining discriminator for {self.args.discriminator_pretraining} epochs")
+
+        return num_update
+
+
+
 class SeqT5Gumbel(SeqT5RL):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
