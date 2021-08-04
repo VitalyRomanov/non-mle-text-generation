@@ -1,13 +1,17 @@
 import logging
+import math
 import random
+from copy import copy
 
+import numpy as np
 from torch import cuda
 from torch.autograd import Variable
 
 import utils
 from ModelTrainer import ModelTrainer, update_learning_rate
 import torch
-from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator, T5SemanticDiscriminator, BleurtDiscriminator
+from discriminator import Discriminator, AttDiscriminator, GumbelDiscriminator, T5Discriminator, \
+    T5SemanticDiscriminator, BleurtDiscriminator, BleurtEmbDiscriminator
 import os
 import json
 
@@ -355,7 +359,7 @@ class SeqT5Bleurt(SeqT5Trainer):
             # self.generator.cuda()
             self.generator.cuda(f'cuda:{self.args.gpuid[0]}')  # manually placing generator to the specified gpu
             if hasattr(self, "discriminator"):
-                self.discriminator.cuda(f'cuda:{cuda.device_count() - 1 - self.args.gpuid[0]}')  # selects other gpu
+                self.discriminator.cuda(f'cuda:{self.args.gpuid[0]}')  #.cuda(f'cuda:{cuda.device_count() - 1 - self.args.gpuid[0]}')  # selects other gpu
         else:
             if hasattr(self, "discriminator"):
                 self.discriminator.cpu()
@@ -370,6 +374,21 @@ class SeqT5Bleurt(SeqT5Trainer):
 class SeqEmbT5Bleurt(SeqT5Bleurt):
     def __init__(self, *args, **kwargs):
         super(SeqEmbT5Bleurt, self).__init__(*args, **kwargs)
+        bert_embeddings = self.discriminator.bleurt_model.bert.embeddings.word_embeddings.weight
+        bert_embeddings = bert_embeddings.cpu().detach().numpy()
+        from sklearn.preprocessing import normalize
+        self.normalize_l2 = normalize
+        import faiss
+        self.faiss_index = faiss.IndexFlatIP(bert_embeddings.shape[1])   # build the index
+        self.faiss_index.add(normalize(bert_embeddings))                  # add vectors to the index
+        # alternative hnsw implementation. With specified params achieves good search quality - on avg 1.5 mismatch|sent
+        # import hnswlib
+        # self.hnsw_graph = hnswlib.Index(space='cosine', dim=bert_embeddings.shape[1]) # possible options are l2, cosine or ip
+        # ef - the size of the dynamic list for the nearest neighbors (used during the search). Higher ef leads to more
+        # accurate but slower search. The value ef of can be anything between k and the size of the dataset.
+        # M - the number of bi-directional links created for every new elem during construction. Reasonable range: 2-100
+        # self.hnsw_graph.init_index(max_elements=bert_embeddings.shape[0], ef_construction = bert_embeddings.shape[0], M = 500)
+        # self.hnsw_graph.add_items(bert_embeddings)
 
     def create_generator(self, args):
         from transformers import T5Tokenizer
@@ -384,6 +403,12 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
         if self.args.freeze_encoder:
             self.generator.encoder.requires_grad = False
 
+    def create_discriminator(self, args):
+        if self.args.d_ckpt_path is not None:
+            print(f"Loading pretrained discriminator from checkpoint {self.args.d_ckpt_path}")
+            self.discriminator = torch.load(self.args.d_ckpt_path)
+        else:
+            self.discriminator = BleurtEmbDiscriminator(decode_fn = lambda pred: self.decode_sentences(pred))
 
     def train_loop(self, trainloader, epoch_i, num_update):
         for i, sample in enumerate(trainloader):
@@ -411,6 +436,272 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
 
         return num_update
 
+    def pg_step(self, sample, batch_i, epoch, loader_len):
+        # print("Policy Gradient Training")
+
+        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
+
+        reward = self.discriminator(output["logits"], sample["target"]) # dim (bsize x 1)
+        reward = reward.cuda(f'cuda:{self.args.gpuid[0]}')
+
+        pg_loss = -reward.mean()  # self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
+        # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
+        #                   output.get("prediction", None))
+
+        with torch.no_grad():
+            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["logits"], sample['target'], output["mask"], pg_loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
+                )
+
+        self.g_optimizer.zero_grad()
+        pg_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
+        self.g_optimizer.step()
+
+    def eval_loop(self, valloader, epoch_i, force=False):
+        for i, sample in enumerate(valloader):
+
+            sample = self.format_sample(sample, extra_tokens=50)
+
+            with torch.no_grad():
+                if self.use_cuda:
+                    # wrap input tensors in cuda tensors
+                    sample = utils.make_variable(sample, cuda=cuda, gpu_id=f'cuda:{self.args.gpuid[0]}')
+
+                if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator") or force is True:
+                    # generator validation
+                    output = self.eval_generation(sample)
+
+                    with torch.no_grad():
+                        reward = self.discriminator(output["logits"], sample["target"]) # dim (bsize x 1)
+                        reward = reward.cuda(f'cuda:{self.args.gpuid[0]}')
+                        output["loss"] = -reward.mean()
+
+                    self.evaluate_generator(
+                        sample["net_input"]["src_tokens"], output["logits"], output["target"], output["mask"], output["loss"], ntokens=sample["ntokens"],
+                        batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle", accumulate=i<len(valloader)-1, write_sents=True
+                    )
+
+    def evaluate_generator(
+            self, original, predictions, targets, target_mask, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
+            strategy=None, accumulate=False, write_sents=False
+    ):
+
+        assert partition in {"train", "valid", "test"}
+        assert strategy in {"mle", "rl", "gumbel"}
+
+        sample_size = targets.size(0) if self.args.sentence_avg else ntokens
+
+        # if hasattr(self, "discriminator"):
+        #     with torch.no_grad():
+        #         discr_score_neg = self.discriminator(predictions, targets).mean()
+        #         discr_score_pos = self.discriminator(targets, targets).mean()
+        # else:
+        discr_score_neg = 0.
+        discr_score_pos = 0.
+
+        import time
+        start = time.time()
+        pred_bert_tokens = self.embs2bert_tokens_exact(predictions).cuda()
+        targets_decoded = self.discriminator.decode_fn(targets) # targets in english
+        targets_bert_tokens_np = np.zeros(targets.shape, dtype=np.int64)
+        for i, t in enumerate(targets_decoded):
+            bert_token_ids = self.discriminator.tokenizer.convert_tokens_to_ids(self.discriminator.tokenizer.tokenize(t))
+            targets_bert_tokens_np[i, :len(bert_token_ids)] = bert_token_ids
+        target_bert_tokens = torch.from_numpy(targets_bert_tokens_np)
+        target_bert_tokens = target_bert_tokens.cuda()
+        end = time.time()
+        print("nn search time for batch:", end-start)
+        # validation code, checks if nn search works fine
+        # target_embs = self.discriminator.bleurt_model.bert.embeddings.word_embeddings(target_bert_tokens)
+        # target_bert_from_embs = self.embs2bert_tokens_exact(target_embs).cuda()
+        # equivalent_tokens = target_bert_from_embs == target_bert_tokens
+        # print(equivalent_tokens)
+        # print("number of mismatches for every sent:", (equivalent_tokens == False).sum(dim=1), "on avg:", (equivalent_tokens == False).sum()/10)
+        # for k in range(10):
+        #     print(self.discriminator.tokenizer.convert_ids_to_tokens(target_bert_tokens[k]))
+        #     print(self.discriminator.tokenizer.convert_ids_to_tokens(target_bert_from_embs[k]))
+        target_bert_mask = target_bert_tokens != 0
+        gen_acc = self.token_accuracy(pred_bert_tokens, target_bert_tokens, target_bert_mask)
+        bleu = self.compute_bleu(pred_bert_tokens, target_bert_tokens, accumulate=accumulate)
+        # rouge = self.compute_rouge(pred_bert_tokens, target_bert_tokens, accumulate=accumulate)
+
+        self.g_logging_meters[f'{partition}_loss'].update(loss, sample_size)
+        self.g_logging_meters[f'{partition}_acc'].update(gen_acc)
+        # self.d_logging_meters[f'{partition}_bleu'].update(bleu)
+        # self.d_logging_meters[f'{partition}_rouge'].update(rouge)
+
+        logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
+                      f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
+
+        if not hasattr(self, "last_sents"):
+            self.last_sents = []
+        for sent in self.discriminator.tokenizer.batch_decode(pred_bert_tokens, skip_special_tokens=True):
+            if len(self.last_sents) >= self.args.gen_sents_in_tb:
+                self.last_sents.pop(0)
+            self.last_sents.append(sent)
+
+        if not accumulate:
+            self.write_summary({
+                f"Loss/{partition}/{strategy}/gen": loss,
+                f"Accuracy/{partition}/gen": gen_acc,
+                f"bleu/{partition}/score": bleu["score"],
+                f"bleu/{partition}/P1": bleu["precisions"][0],
+                f"bleu/{partition}/P2": bleu["precisions"][1],
+                f"bleu/{partition}/P3": bleu["precisions"][2],
+                f"bleu/{partition}/P4": bleu["precisions"][3],
+                f"rouge/{partition}/rouge1/high/f1": 0.,  # rouge["rouge1"].high.fmeasure,
+                f"rouge/{partition}/rouge2/high/f1": 0.,  # rouge["rouge2"].high.fmeasure,
+                f"rouge/{partition}/rougeL/high/f1": 0.,  # rouge["rougeL"].high.fmeasure,
+                f"rouge/{partition}/rouge1/high/P": 0.,  # rouge["rouge1"].high.precision,
+                f"rouge/{partition}/rouge2/high/P": 0.,  # rouge["rouge2"].high.precision,
+                f"rouge/{partition}/rougeL/high/P": 0.,  # rouge["rougeL"].high.precision,
+                f"discr_score/{partition}/negative": discr_score_neg,
+                f"discr_score/{partition}/positive": discr_score_pos,
+            }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents)
+
+    def wrap_for_output(self, sample, logits, modified_logits=None, output_tokens=None, input_onehot=None, output_onehot=None, target_onehot=None):
+        if input_onehot is not None: # add zeros to use indexing from 1
+            zeros = torch.zeros((input_onehot.shape[0], input_onehot.shape[1], 1)).to(input_onehot.device)
+            input_onehot = torch.cat([zeros, input_onehot], dim=2)
+            zeros = torch.zeros((output_onehot.shape[0], output_onehot.shape[1], 1)).to(output_onehot.device)
+            output_onehot = torch.cat([zeros, output_onehot], dim=2)
+            zeros = torch.zeros((target_onehot.shape[0], target_onehot.shape[1], 1)).to(target_onehot.device)
+            target_onehot = torch.cat([zeros, target_onehot], dim=2)
+
+        if output_tokens is not None:
+            pred = output_tokens
+        elif output_onehot is not None:
+            pred = output_onehot.argmax(-1) - 1
+        else:
+            pred = logits.argmax(-1)
+
+        output = {
+            "logits": logits,
+            "target": sample["target"],
+            "mask": self.get_length_mask(sample["target"]),
+            "prediction": self.transform_from_t5(pred),
+            "input_onehot": input_onehot,
+            "output_onehot": output_onehot,
+            "target_onehot": target_onehot,
+            "modified_logits": modified_logits,
+        }
+
+        output["loss"] = 1. #self.g_criterion(
+        # output["logits"][output["mask"], :],
+        # self.transform_for_t5(output["target"])[output["mask"]]
+        # )
+        return output
+
+    def train(self):
+        args = self.args
+
+        # start joint training
+        best_dev_loss = math.inf
+        num_update = 0
+
+        if self.args.start_epoch == 1:
+            self.validate(args, epoch_i=0, force=True)
+
+        # main training loop
+        for epoch_i in range(self.args.start_epoch, args.epochs + 1):
+            logging.info(f"At {epoch_i}-th epoch.")
+
+            seed = args.seed + epoch_i
+            torch.manual_seed(seed)
+
+            max_positions_train = (args.fixed_max_len, args.fixed_max_len)
+
+            # Initialize dataloader, starting at batch_offset
+            trainloader = self.dataset.train_dataloader(
+                'train',
+                max_tokens=args.max_tokens,
+                max_sentences=args.joint_batch_size,
+                max_positions=max_positions_train,
+                seed=seed,
+                epoch=epoch_i,
+                sample_without_replacement=args.sample_without_replacement,
+                sort_by_source_size=(epoch_i <= args.curriculum),
+                shard_id=args.distributed_rank,
+                num_shards=args.distributed_world_size,
+            )
+
+            # reset meters
+            for key, val in self.g_logging_meters.items():
+                if val is not None:
+                    val.reset()
+            for key, val in self.d_logging_meters.items():
+                if val is not None:
+                    val.reset()
+
+            # set training mode
+            self.generator.train()
+            # if hasattr(self, "discriminator"):
+                # self.discriminator.train()
+            # update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
+
+            print(f"Training batches: {len(trainloader)}")
+
+            num_update = self.train_loop(trainloader, epoch_i, num_update)
+
+            self.validate(args, epoch_i)
+
+            self.save_models(epoch_i)
+
+            if self.g_logging_meters['valid_loss'].avg < best_dev_loss:
+                best_dev_loss = self.g_logging_meters['valid_loss'].avg
+                self.save_generator(os.path.join(self.checkpoints_path, "best_gmodel.pt"))
+
+    def format_sample(self, sample, extra_tokens=20):
+        sample = copy(sample)
+
+        max_src_len = min(sample["net_input"]['src_tokens'].size(1), max(sample["net_input"]['src_lengths'].tolist()))
+        max_trg_len = min(sample["target"].size(1), max(sample["target_lengths"].tolist()) + extra_tokens)
+
+        sample["net_input"]['src_tokens'] = sample["net_input"]['src_tokens'][:, :max_src_len].contiguous()
+        sample["target"] = sample["target"][:, :max_trg_len].contiguous()
+        sample["attention_mask"] = self.get_length_mask(sample["net_input"]["src_tokens"], sample["net_input"]['src_lengths'])
+        return sample
+
+    def embs2bert_tokens_hnsw(self, prediction_embs):
+        prediction_embs_np = prediction_embs.cpu().detach().numpy()
+        # flattening across batch to avoid loops
+        prediction_embs_np_glued = prediction_embs_np.reshape(-1, prediction_embs.shape[-1])
+        nnbrs, dist = self.hnsw_graph.knn_query(data=prediction_embs_np_glued, k=1)
+        nnbrs = np.squeeze(nnbrs, axis=-1)
+        # reshaping back
+        nnbrs = nnbrs.reshape((prediction_embs_np.shape[0], prediction_embs.shape[1]))
+        return torch.from_numpy(nnbrs.astype(np.int64))
+
+    def embs2bert_tokens_exact(self, prediction_embs):
+        prediction_embs_np = prediction_embs.cpu().detach().numpy()
+        # flattening across batch to avoid loops
+        prediction_embs_np_glued = prediction_embs_np.reshape(-1, prediction_embs.shape[-1])
+        # nnbrs = self.nbrs.kneighbors(prediction_embs_np_glued, return_distance=False)
+        dist, nnbrs = self.faiss_index.search(self.normalize_l2(prediction_embs_np_glued), 1)
+        nnbrs = np.squeeze(nnbrs, axis=-1)
+        # reshaping back
+        nnbrs = nnbrs.reshape((prediction_embs_np.shape[0], prediction_embs.shape[1]))
+        return torch.from_numpy(nnbrs)
+
+    def compute_bleu(self, predictions, references, accumulate=False):
+        predictions_decoded = self.discriminator.tokenizer.batch_decode(predictions, skip_special_tokens=True)
+        references_decoded = self.discriminator.tokenizer.batch_decode(references, skip_special_tokens=True)
+        references_decoded = [[ref] for ref in references_decoded]
+        self.bleu_metric.add_batch(
+            predictions=predictions_decoded,
+            references=references_decoded
+        )
+        if not accumulate:
+            bleu = self.bleu_metric.compute(
+                predictions=predictions_decoded,
+                references=references_decoded
+            )
+        else:
+            bleu = None
+        return bleu
 
 
 class SeqT5Gumbel(SeqT5RL):

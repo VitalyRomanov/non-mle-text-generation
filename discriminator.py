@@ -270,9 +270,9 @@ class BleurtDiscriminator(nn.Module):
         return torch.Tensor(scores).reshape(-1,1)
 
 
-class BleurtTorchDiscriminator(nn.Module):
+class BleurtEmbDiscriminator(nn.Module):
     def __init__(self, decode_fn):
-        super(BleurtTorchDiscriminator, self).__init__()
+        super(BleurtEmbDiscriminator, self).__init__()
         self.decode_fn = decode_fn
         from BleurtTorch import BleurtModel
         import transformers
@@ -280,29 +280,45 @@ class BleurtTorchDiscriminator(nn.Module):
         config = transformers.BertConfig()
         self.bleurt_model = BleurtModel(config)
         self.bleurt_model.load_state_dict(torch.load(checkpoint))
-        for param in self.bleurt_model.parameters():
-            param.requires_grad = False
         self.bleurt_model.eval()
         self.tokenizer = transformers.BertTokenizerFast.from_pretrained("bert-base-uncased")
+        from BleurtTorch import encode_batch
+        self.encode_batch = encode_batch
 
     def forward(self, prediction_embs, target):
         # list of references decoded from t5 to english
         references = self.decode_fn(target)
-        # creating list of dummy candidates
-        # todo length of each sentence (number of dots, currently 5 for all sents) should be inferred
-        # todo from prediction_embs somehow. + make sure that dots work well as dummies - mb [MASK] is better?
-        dummy_candidates = ['.' * 5] * target.shape[0]
-        from BleurtTorch import encode_batch  # todo where this should be imported??
+        # creating list of dummy candidates which simply copy references
+        dummy_candidates = references
         max_seq_len = 128  # hard coded because there is no way to get this info from self.bleurt_model
-        input_ids, input_mask, segment_ids = encode_batch(references, dummy_candidates, self.tokenizer, max_seq_len)
+        input_ids, input_mask, segment_ids = self.encode_batch(references, dummy_candidates, self.tokenizer, max_seq_len)
         # generating input_embeds by looking up embs for input_ids (for all ids, including dummies)
         input_ids_tensor, input_mask_tensor, segment_ids_tensor = torch.from_numpy(input_ids).cuda(), \
                                                                   torch.from_numpy(input_mask).cuda(), \
                                                                   torch.from_numpy(segment_ids).cuda()
         input_embeds = self.bleurt_model.bert.embeddings.word_embeddings(input_ids_tensor)
-        # todo replace embeddings of dummies by prediction_embs.
-        # todo segment_ids will show where each candidate begins (first 1 position) and where it ends (second last 1 position)
-        # input_embeds [...] = ...
+        # injects prediction_embs instead of dummy_candidates embeddings, cutting to target len
+        def inject_candidates(input_embeds, prediction_embs, segment_ids_tensor):
+            updated_input_embeds = []
+
+            for ind, row in enumerate(segment_ids_tensor):
+                emb_row = input_embeds[ind]
+                pred_row = prediction_embs[ind]
+                non_zero = row.nonzero(as_tuple=False)
+                candidate_start = non_zero[0]
+                candidate_end = non_zero[-2]
+
+                assert candidate_start <= candidate_end
+
+                emb_row[candidate_start: candidate_end, : ] = pred_row[0: candidate_end - candidate_start]
+                updated_input_embeds.append(emb_row.unsqueeze(0))
+
+            updated_input_embeds = torch.cat(updated_input_embeds, dim=0)
+
+            return updated_input_embeds
+
+        input_embeds = inject_candidates(input_embeds, prediction_embs, segment_ids_tensor)
+
         # passing through the model
         scores = self.bleurt_model(inputs_embeds=input_embeds,
                                    input_mask=input_mask_tensor,

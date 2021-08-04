@@ -1086,13 +1086,14 @@ class SeqT5_Discriminator(SeqT5):
 
 
 class SeqEmbT5(SeqT5):
-    def __init__(self, config, out_dim=512):
+    def __init__(self, config, out_dim=768):
         super(SeqEmbT5, self).__init__(config)
         if out_dim is None:
             out_dim = config.d_model
         self.out_dim = out_dim
-        self.start_token = torch.nn.Parameter(torch.randn(1, out_dim))
-        self.emb_head = nn.Linear(config.d_model, out_dim, bias=False)
+        self.start_token = torch.nn.Parameter(torch.randn(1, 1, config.d_model))
+        self.emb_head = nn.Linear(config.d_model, config.d_model, bias=False)
+        self.emb_out_adapter = nn.Linear(config.d_model, out_dim, bias=False)
 
     def compute_logits(self, decoder_output):
         sequence_output = decoder_output[0]
@@ -1127,7 +1128,7 @@ class SeqEmbT5(SeqT5):
         batch_size, seq_len = decoder_input_ids.shape[:2]
         for tok_ind in range(seq_len):
             if tok_ind == 0:
-                decoder_inputs_embeds = self.start_token.repeat(batch_size, 1).to(decoder_input_ids.device)
+                decoder_inputs_embeds = self.start_token.repeat(batch_size, 1, 1).to(decoder_input_ids.device)
             else:
                 decoder_inputs_embeds = torch.cat([
                     decoder_inputs_embeds, next_emb
@@ -1140,7 +1141,8 @@ class SeqEmbT5(SeqT5):
                                               decoder_head_mask, head_mask, output_attentions, output_hidden_states,
                                               dummy_tensor)
 
-            next_emb = out_embs[:, -1, :]
+            next_emb = out_embs[:, -1, :].unsqueeze(1)
+            output_logits.append(next_emb)
 
             output_tokens.append(torch.ones(batch_size, 1))
 
@@ -1160,11 +1162,169 @@ class SeqEmbT5(SeqT5):
                 return_dict=return_dict,
             )
 
-        output_logits = torch.cat(output_logits, dim=1)
-        modified_logits = torch.cat(modified_logits, dim=1)
+        output_logits = self.emb_out_adapter(torch.cat(output_logits, dim=1))
+        modified_logits = output_logits
         output_tokens = torch.cat(output_tokens, dim=1)
 
         return decoder_outputs, output_logits, output_tokens, modified_logits
+
+    def forward(
+            self,
+            input_ids=None,
+            attention_mask=None,
+            decoder_input_ids=None,
+            decoder_attention_mask=None,
+            head_mask=None,
+            decoder_head_mask=None,
+            encoder_outputs=None,
+            past_key_values=None,
+            inputs_embeds=None,
+            decoder_inputs_embeds=None,
+            labels=None,
+            use_cache=None,
+            output_attentions=None,
+            output_hidden_states=None,
+            return_dict=None,
+            decoding_style="tf",  # options: teacher forcing (tf), gumbel (gumbel), top p (rl)
+            temperature=1.,
+            top_k=0,
+            top_p=1.,
+            epsilon=0.,
+            ss_prob=0.
+    ):
+        r"""
+        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+            Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[-100, 0, ...,
+            config.vocab_size - 1]`. All labels set to ``-100`` are ignored (masked), the loss is only computed for
+            labels in ``[0, ..., config.vocab_size]``
+
+        Returns:
+
+        Examples::
+
+            >>> from transformers import T5Tokenizer, T5ForConditionalGeneration
+
+            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
+            >>> model = T5ForConditionalGeneration.from_pretrained('t5-small')
+
+            >>> input_ids = tokenizer('The <extra_id_0> walks in <extra_id_1> park', return_tensors='pt').input_ids
+            >>> labels = tokenizer('<extra_id_0> cute dog <extra_id_1> the <extra_id_2> </s>', return_tensors='pt').input_ids
+            >>> outputs = model(input_ids=input_ids, labels=labels)
+            >>> loss = outputs.loss
+            >>> logits = outputs.logits
+
+            >>> input_ids = tokenizer("summarize: studies have shown that owning a dog is good for you ", return_tensors="pt").input_ids  # Batch size 1
+            >>> outputs = model.generate(input_ids)
+        """
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        # FutureWarning: head_mask was separated into two input args - head_mask, decoder_head_mask
+        if head_mask is not None and decoder_head_mask is None:
+            if self.config.num_layers == self.config.num_decoder_layers:
+                warnings.warn(s__HEAD_MASK_WARNING_MSG, FutureWarning)
+                decoder_head_mask = head_mask
+
+        # Encode if needed (training, first prediction pass)
+        if encoder_outputs is None:
+            # Convert encoder inputs in embeddings if needed
+            encoder_outputs = self.encoder(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                inputs_embeds=inputs_embeds,
+                head_mask=head_mask,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+        elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
+            encoder_outputs = BaseModelOutput(
+                last_hidden_state=encoder_outputs[0],
+                hidden_states=encoder_outputs[1] if len(encoder_outputs) > 1 else None,
+                attentions=encoder_outputs[2] if len(encoder_outputs) > 2 else None,
+            )
+
+        hidden_states = encoder_outputs[0]
+
+        if self.model_parallel:
+            torch.cuda.set_device(self.decoder.first_device)
+
+        if labels is not None and decoder_input_ids is None and decoder_inputs_embeds is None:
+            # get decoder inputs from shifting lm labels to the right
+            decoder_input_ids = self._shift_right(labels)
+            decoder_input_ids[:, 0] = 0
+
+        # If decoding with past key value states, only the last tokens
+        # should be given as an input
+        if past_key_values is not None:
+            assert labels is None, "Decoder should not use cached key value states when training."
+            if decoder_input_ids is not None:
+                decoder_input_ids = decoder_input_ids[:, -1:]
+            if decoder_inputs_embeds is not None:
+                decoder_inputs_embeds = decoder_inputs_embeds[:, -1:]
+
+        # Set device for model parallelism
+        if self.model_parallel:
+            torch.cuda.set_device(self.decoder.first_device)
+            hidden_states = hidden_states.to(self.decoder.first_device)
+            if decoder_input_ids is not None:
+                decoder_input_ids = decoder_input_ids.to(self.decoder.first_device)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.decoder.first_device)
+            if decoder_attention_mask is not None:
+                decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
+
+        # Decode
+
+        decode_args =  (
+            decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+            hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+            output_hidden_states, return_dict
+        )
+
+        if decoding_style == "tf":
+            decoder_outputs, lm_logits = self.teacher_forcing_decode(*decode_args, top_k=top_k, top_p=top_p)
+            input_onehot = output_onehot = target_onehot = modified_logits = output_tokens = None
+        elif decoding_style == "gumbel":
+            input_onehot = nn.functional.one_hot(input_ids, num_classes=self.decoder.embed_tokens.num_embeddings).float()
+            target_onehot = nn.functional.one_hot(decoder_input_ids, num_classes=self.decoder.embed_tokens.num_embeddings).float()
+            decoder_outputs, lm_logits, output_onehot, modified_logits = self.gumbel_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
+            output_tokens = None
+        elif decoding_style == "rl":
+            decoder_outputs, lm_logits, output_tokens, modified_logits = self.top_p_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon)
+            input_onehot = output_onehot = target_onehot = None
+        elif decoding_style == "ss":
+            decoder_outputs, lm_logits, output_tokens, modified_logits = self.ss_decode(*decode_args, temperature=temperature, top_k=top_k, top_p=top_p, epsilon=epsilon, ss_prob=ss_prob)
+            input_onehot = output_onehot = target_onehot = None
+        else:
+            raise ValueError(f"`decoding_style` is {decoding_style} but supported values are: tf|gumbel|rl")
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss(ignore_index=-100)
+            loss = None  #loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))  # TODO need to set temperature here?
+            # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666
+
+        if not return_dict:
+            output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
+            return ((loss,) + output) if loss is not None else output
+
+        return AdversarialSeq2SeqLMOutput(
+            loss=loss,
+            logits=lm_logits,
+            past_key_values=decoder_outputs.past_key_values,
+            decoder_hidden_states=decoder_outputs.hidden_states,
+            decoder_attentions=decoder_outputs.attentions,
+            cross_attentions=decoder_outputs.cross_attentions,
+            encoder_last_hidden_state=encoder_outputs.last_hidden_state,
+            encoder_hidden_states=encoder_outputs.hidden_states,
+            encoder_attentions=encoder_outputs.attentions,
+            input_onehot=input_onehot,
+            output_onehot=output_onehot,
+            target_onehot=target_onehot,
+            output_tokens=output_tokens,
+            modified_logits=modified_logits
+        )
 
 
 def test_T5():

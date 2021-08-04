@@ -93,8 +93,8 @@ checkpoint = "bleurt/bleurt-base-128-torch.pb"
 config = transformers.BertConfig()
 restored_bleurt_model = BleurtModel(config)
 restored_bleurt_model.load_state_dict(torch.load(checkpoint))
-for param in restored_bleurt_model.parameters():
-    param.requires_grad = False
+# for param in restored_bleurt_model.parameters(): # this turns out to be not needed
+#     param.requires_grad = False
 restored_bleurt_model.eval()
 
 restored_bleurt_torch_score = restored_bleurt_model(input_ids = torch.from_numpy(input_ids),
