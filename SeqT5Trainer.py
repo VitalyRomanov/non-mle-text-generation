@@ -436,6 +436,17 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
 
         return num_update
 
+    def targets_to_bert_ids(self, targets):
+        targets_decoded = self.discriminator.decode_fn(targets) # targets in english
+        targets_bert_tokens_np = np.zeros(targets.shape, dtype=np.int64)
+        for i, t in enumerate(targets_decoded):
+            bert_token_ids = self.discriminator.tokenizer.convert_tokens_to_ids(self.discriminator.tokenizer.tokenize(t))
+            proper_seq_len = min(len(bert_token_ids), targets.shape[1])
+            targets_bert_tokens_np[i, :proper_seq_len] = bert_token_ids[:proper_seq_len]
+        target_bert_tokens = torch.from_numpy(targets_bert_tokens_np)
+        target_bert_tokens = target_bert_tokens.cuda()
+        return target_bert_tokens
+
     def pg_step(self, sample, batch_i, epoch, loader_len):
         # print("Policy Gradient Training")
 
@@ -447,6 +458,13 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
         pg_loss = -reward.mean()  # self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
         # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
         #                   output.get("prediction", None))
+        with torch.no_grad():
+            target_bert_tokens = self.targets_to_bert_ids(sample["target"])
+            target_bert_embeddings = self.discriminator.bleurt_model.bert.embeddings.word_embeddings(target_bert_tokens)
+
+        l2_emb_loss = torch.norm(output["logits"] - target_bert_embeddings, dim=-1).mean()
+
+        total_loss = pg_loss + l2_emb_loss
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
@@ -454,9 +472,13 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
                     sample["net_input"]["src_tokens"], output["logits"], sample['target'], output["mask"], pg_loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
                 )
+                self.evaluate_generator(
+                    sample["net_input"]["src_tokens"], output["logits"], sample['target'], output["mask"], l2_emb_loss,
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="l2_emb"
+                )
 
         self.g_optimizer.zero_grad()
-        pg_loss.backward()
+        total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
 
@@ -490,7 +512,7 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
     ):
 
         assert partition in {"train", "valid", "test"}
-        assert strategy in {"mle", "rl", "gumbel"}
+        assert strategy in {"mle", "rl", "gumbel", "l2_emb"}
 
         sample_size = targets.size(0) if self.args.sentence_avg else ntokens
 
@@ -503,17 +525,8 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
         discr_score_pos = 0.
 
         import time
-        start = time.time()
         pred_bert_tokens = self.embs2bert_tokens_exact(predictions).cuda()
-        targets_decoded = self.discriminator.decode_fn(targets) # targets in english
-        targets_bert_tokens_np = np.zeros(targets.shape, dtype=np.int64)
-        for i, t in enumerate(targets_decoded):
-            bert_token_ids = self.discriminator.tokenizer.convert_tokens_to_ids(self.discriminator.tokenizer.tokenize(t))
-            targets_bert_tokens_np[i, :len(bert_token_ids)] = bert_token_ids
-        target_bert_tokens = torch.from_numpy(targets_bert_tokens_np)
-        target_bert_tokens = target_bert_tokens.cuda()
-        end = time.time()
-        print("nn search time for batch:", end-start)
+        target_bert_tokens = self.targets_to_bert_ids(targets)
         # validation code, checks if nn search works fine
         # target_embs = self.discriminator.bleurt_model.bert.embeddings.word_embeddings(target_bert_tokens)
         # target_bert_from_embs = self.embs2bert_tokens_exact(target_embs).cuda()
