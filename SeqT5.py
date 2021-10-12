@@ -1091,9 +1091,10 @@ class SeqEmbT5(SeqT5):
         if out_dim is None:
             out_dim = config.d_model
         self.out_dim = out_dim
-        self.start_token = torch.nn.Parameter(torch.randn(1, 1, config.d_model))
+        self.start_token = torch.nn.Parameter(torch.randn(1, 1, out_dim))
         self.emb_head = nn.Linear(config.d_model, config.d_model, bias=False)
         self.emb_out_adapter = nn.Linear(config.d_model, out_dim, bias=False)
+        self.emb_decoder_input_adapter = nn.Linear(out_dim, config.d_model, bias=False)
 
     def compute_logits(self, decoder_output):
         sequence_output = decoder_output[0]
@@ -1121,14 +1122,20 @@ class SeqEmbT5(SeqT5):
         """
         Decode with top p gradual sampling for RL objective
         """
-        decoder_inputs_embeds = None
+        # decoder_inputs_embeds = None
+        if decoder_inputs_embeds is not None:
+            batch_size, seq_len = decoder_inputs_embeds.shape[:2]
+            device = decoder_inputs_embeds.device
+        else:
+            batch_size, seq_len = decoder_input_ids.shape[:2]
+            device = decoder_input_ids.device
         modified_logits = []
         output_logits = []
         output_tokens = []
-        batch_size, seq_len = decoder_input_ids.shape[:2]
+        # batch_size, seq_len = decoder_input_ids.shape[:2]
         for tok_ind in range(seq_len):
             if tok_ind == 0:
-                decoder_inputs_embeds = self.start_token.repeat(batch_size, 1, 1).to(decoder_input_ids.device)
+                decoder_inputs_embeds = self.emb_decoder_input_adapter(self.start_token.repeat(batch_size, 1, 1)).to(device)
             else:
                 decoder_inputs_embeds = torch.cat([
                     decoder_inputs_embeds, next_emb
@@ -1254,6 +1261,12 @@ class SeqEmbT5(SeqT5):
             decoder_input_ids = self._shift_right(labels)
             decoder_input_ids[:, 0] = 0
 
+        if decoder_inputs_embeds is not None:
+            decoder_inputs_embeds = torch.cat([
+                self.start_token.repeat(decoder_inputs_embeds.shape[0], 1, 1).to(decoder_inputs_embeds.device),
+                decoder_inputs_embeds
+            ], dim=1)[:,:-1,:]
+
         # If decoding with past key value states, only the last tokens
         # should be given as an input
         if past_key_values is not None:
@@ -1283,7 +1296,12 @@ class SeqEmbT5(SeqT5):
         )
 
         if decoding_style == "tf":
-            decoder_outputs, lm_logits = self.teacher_forcing_decode(*decode_args, top_k=top_k, top_p=top_p)
+            decoder_inputs_embeds = self.emb_decoder_input_adapter(decoder_inputs_embeds)
+            decoder_outputs, lm_logits = self.teacher_forcing_decode(
+                decoder_input_ids, decoder_attention_mask, decoder_inputs_embeds, past_key_values,
+                hidden_states, attention_mask, decoder_head_mask, head_mask, use_cache, output_attentions,
+                output_hidden_states, return_dict, top_k=top_k, top_p=top_p)
+            lm_logits = self.emb_out_adapter(lm_logits)
             input_onehot = output_onehot = target_onehot = modified_logits = output_tokens = None
         elif decoding_style == "gumbel":
             input_onehot = nn.functional.one_hot(input_ids, num_classes=self.decoder.embed_tokens.num_embeddings).float()

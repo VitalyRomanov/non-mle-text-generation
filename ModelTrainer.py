@@ -193,7 +193,7 @@ class ModelTrainer:
                                                                   # momentum=args.momentum,
                                                                   # nesterov=True)
 
-    def write_summary(self, scores, batch_step, write_sents=False):
+    def write_summary(self, scores, batch_step, write_sents=False, partition=""):
         # main_name = os.path.basename(self.model_base_path)
         for var, val in scores.items():
             # self.summary_writer.add_scalar(f"{main_name}/{var}", val, batch_step)
@@ -201,7 +201,7 @@ class ModelTrainer:
         if write_sents:
             if len(self.last_sents) == self.args.gen_sents_in_tb:
                 for ind, sent in enumerate(self.last_sents):
-                    self.summary_writer.add_text(f"gen/{ind}", sent, global_step=batch_step)
+                    self.summary_writer.add_text(f"gen/{partition}/{ind}", sent, global_step=batch_step)
         # self.summary_writer.add_scalars(main_name, scores, batch_step)
 
     def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=1., ss_prob=0.):

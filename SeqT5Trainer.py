@@ -6,6 +6,7 @@ from copy import copy
 import numpy as np
 from torch import cuda
 from torch.autograd import Variable
+from tqdm import tqdm
 
 import utils
 from ModelTrainer import ModelTrainer, update_learning_rate
@@ -399,7 +400,10 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
             print(f"Loading pretrained generator from checkpoint {self.args.g_ckpt_path}")
             self.generator = SeqEmbT5.from_pretrained(self.args.g_ckpt_path)
         else:
-            self.generator = SeqEmbT5.from_pretrained('t5-small')
+            # self.generator = SeqEmbT5.from_pretrained('t5-small')
+            from transformers import T5Config
+            config = T5Config(d_model=128, d_ff=512)
+            self.generator = SeqEmbT5(config)
         if self.args.freeze_encoder:
             self.generator.encoder.requires_grad = False
 
@@ -411,7 +415,7 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
             self.discriminator = BleurtEmbDiscriminator(decode_fn = lambda pred: self.decode_sentences(pred))
 
     def train_loop(self, trainloader, epoch_i, num_update):
-        for i, sample in enumerate(trainloader):
+        for i, sample in tqdm(enumerate(trainloader), total=len(trainloader)):
 
             sample = self.format_sample(sample)
 
@@ -440,47 +444,62 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
         targets_decoded = self.discriminator.decode_fn(targets) # targets in english
         targets_bert_tokens_np = np.zeros(targets.shape, dtype=np.int64)
         for i, t in enumerate(targets_decoded):
-            bert_token_ids = self.discriminator.tokenizer.convert_tokens_to_ids(self.discriminator.tokenizer.tokenize(t))
+            bert_token_ids = self.discriminator.tokenizer.convert_tokens_to_ids(self.discriminator.tokenizer.tokenize(t)+["[SEP]"])
             proper_seq_len = min(len(bert_token_ids), targets.shape[1])
             targets_bert_tokens_np[i, :proper_seq_len] = bert_token_ids[:proper_seq_len]
         target_bert_tokens = torch.from_numpy(targets_bert_tokens_np)
         target_bert_tokens = target_bert_tokens.cuda()
         return target_bert_tokens
 
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=.2, ss_prob=0., bert_embeddings=None):
+        t5out = self.generator(
+            self.transform_for_t5(sample['net_input']['src_tokens']), attention_mask=sample["attention_mask"],
+            labels=self.transform_for_t5(sample['target']), decoding_style=decoding_style, top_k=top_k, top_p=top_p,
+            temperature=temp, epsilon=self.args.imp_smpl_epsilon, ss_prob=ss_prob, decoder_inputs_embeds=bert_embeddings
+        )
+
+        # if decoding_style == "gumbel":
+        #     return self.wrap_for_output(sample, t5out.logits, input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot)
+        return self.wrap_for_output(
+            sample, t5out.logits, modified_logits=t5out.modified_logits, output_tokens=t5out.output_tokens,
+            input_onehot=t5out.input_onehot, output_onehot=t5out.output_onehot, target_onehot=t5out.target_onehot
+        )
+
     def pg_step(self, sample, batch_i, epoch, loader_len):
         # print("Policy Gradient Training")
 
-        output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
-
-        reward = self.discriminator(output["logits"], sample["target"]) # dim (bsize x 1)
-        reward = reward.cuda(f'cuda:{self.args.gpuid[0]}')
-
-        pg_loss = -reward.mean()  # self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
-        # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
-        #                   output.get("prediction", None))
         with torch.no_grad():
             target_bert_tokens = self.targets_to_bert_ids(sample["target"])
             target_bert_embeddings = self.discriminator.bleurt_model.bert.embeddings.word_embeddings(target_bert_tokens)
 
-        l2_emb_loss = torch.norm(output["logits"] - target_bert_embeddings, dim=-1).mean()
+        output = self.sequential_generation(sample, decoding_style="rl", top_k=0, top_p=0.6, bert_embeddings=target_bert_embeddings)
 
-        total_loss = pg_loss + l2_emb_loss
+        # reward = self.discriminator(output["logits"], sample["target"]) # dim (bsize x 1)
+        # reward = reward.cuda(f'cuda:{self.args.gpuid[0]}')
+        #
+        # pg_loss = -reward.mean()
+
+        l2_emb_loss = torch.norm(output["logits"] - target_bert_embeddings, dim=-1, p=1).mean()
+
+        total_loss = l2_emb_loss # pg_loss + l2_emb_loss
 
         with torch.no_grad():
-            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
-                self.evaluate_generator(
-                    sample["net_input"]["src_tokens"], output["logits"], sample['target'], output["mask"], pg_loss,
-                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
-                )
+            if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0 or batch_i == loader_len - 1:
                 self.evaluate_generator(
                     sample["net_input"]["src_tokens"], output["logits"], sample['target'], output["mask"], l2_emb_loss,
-                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="l2_emb"
+                    sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="l2_emb", write_sents=True
                 )
 
         self.g_optimizer.zero_grad()
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.clip_norm)
         self.g_optimizer.step()
+
+    def eval_generation(self, sample):
+        with torch.no_grad():
+            target_bert_tokens = self.targets_to_bert_ids(sample["target"])
+            target_bert_embeddings = self.discriminator.bleurt_model.bert.embeddings.word_embeddings(target_bert_tokens)
+        return self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=1, temp=.5, bert_embeddings=target_bert_embeddings)
 
     def eval_loop(self, valloader, epoch_i, force=False):
         for i, sample in enumerate(valloader):
@@ -573,7 +592,7 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
                 f"rouge/{partition}/rougeL/high/P": 0.,  # rouge["rougeL"].high.precision,
                 f"discr_score/{partition}/negative": discr_score_neg,
                 f"discr_score/{partition}/positive": discr_score_pos,
-            }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents)
+            }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents, partition=partition)
 
     def wrap_for_output(self, sample, logits, modified_logits=None, output_tokens=None, input_onehot=None, output_onehot=None, target_onehot=None):
         if input_onehot is not None: # add zeros to use indexing from 1
@@ -625,6 +644,11 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
             seed = args.seed + epoch_i
             torch.manual_seed(seed)
 
+            # gradual linear growth of sentence length to simplify learning
+            # fixed_max_len = min(int(epoch_i / 50) + 10, args.fixed_max_len)
+            # print(f"Maximum sentence length at epoch {epoch_i} is {fixed_max_len}")
+
+            # max_positions_train = (fixed_max_len, fixed_max_len)
             max_positions_train = (args.fixed_max_len, args.fixed_max_len)
 
             # Initialize dataloader, starting at batch_offset
@@ -699,9 +723,19 @@ class SeqEmbT5Bleurt(SeqT5Bleurt):
         nnbrs = nnbrs.reshape((prediction_embs_np.shape[0], prediction_embs.shape[1]))
         return torch.from_numpy(nnbrs)
 
+    def crop_after_bert_sep(self, sentences_tokens):
+        cropped_sent_tokens = []
+        for sentence_tokens in sentences_tokens:
+            sep_locations = (sentence_tokens == 102).nonzero(as_tuple=False)
+            eos_idx = sep_locations[0] if len(sep_locations) > 0 else None
+            if eos_idx is not None:
+                sentence_tokens = sentence_tokens[:eos_idx]
+            cropped_sent_tokens.append(sentence_tokens)
+        return cropped_sent_tokens
+
     def compute_bleu(self, predictions, references, accumulate=False):
-        predictions_decoded = self.discriminator.tokenizer.batch_decode(predictions, skip_special_tokens=True)
-        references_decoded = self.discriminator.tokenizer.batch_decode(references, skip_special_tokens=True)
+        predictions_decoded = self.discriminator.tokenizer.batch_decode(self.crop_after_bert_sep(predictions), skip_special_tokens=True)
+        references_decoded = self.discriminator.tokenizer.batch_decode(self.crop_after_bert_sep(references), skip_special_tokens=True)
         references_decoded = [[ref] for ref in references_decoded]
         self.bleu_metric.add_batch(
             predictions=predictions_decoded,
