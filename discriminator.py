@@ -264,7 +264,7 @@ class BleurtDiscriminator(nn.Module):
         self.scorer = bleurt_score.BleurtScorer(checkpoint)
         self.decode_fn = decode_fn
 
-    def forward(self, prediction, target):
+    def forward(self, target, prediction):
         candidates, references = self.decode_fn(prediction), self.decode_fn(target)
         scores = self.scorer.score(references=references, candidates=candidates)
         return torch.Tensor(scores).reshape(-1,1)
