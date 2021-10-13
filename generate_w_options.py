@@ -115,7 +115,7 @@ def test_T5(args):
         generator_params = get_grid()
     else:
         generator_params = ParameterGrid({
-            "temperature": [float(args.t)] if "," not in args.t else list(map(int,args.t.split(","))),
+            "temperature": [float(args.t)] if "," not in args.t else list(map(float,args.t.split(","))),
             "top_p": [float(args.top_p)] if "," not in args.top_p else list(map(float,args.top_p.split(","))),
             "top_k": [int(args.top_k)] if "," not in args.top_k else list(map(int,args.top_k.split(","))),
             "do_sample": [args.do_sample],

@@ -4,9 +4,12 @@ from abc import abstractmethod
 from copy import copy
 from datetime import datetime
 import logging
+from typing import Dict
+
 import dill
 import os
 
+from sklearn.preprocessing import normalize
 from torch.utils.tensorboard import SummaryWriter
 
 import random
@@ -16,12 +19,13 @@ from collections import OrderedDict
 import torch
 from torch import cuda
 from torch.autograd import Variable
+from tqdm import tqdm
 
 import data
 import utils
 from meters import AverageMeter
 from discriminator import Discriminator, AttDiscriminator
-from generator import LSTMModel, VarLSTMModel
+from generator import LSTMModel, VarLSTMModel, LSTMEmbModel
 # from train_generator import train_g
 # from train_discriminator import train_d
 from PGLoss import PGLoss
@@ -207,8 +211,25 @@ class ModelTrainer:
     def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=1., ss_prob=0.):
         return self.teacher_forcing_generation(sample)
 
+    def compute_pg_loss(self, generator_input:Dict, generator_output: Dict, reward):
+        return self.pg_criterion(
+            generator_output["logits"], generator_output['target'], reward,
+            generator_output.get("modified_logits", None), generator_output.get("prediction", None)
+        )
+
+    def compute_discriminator_score(self, generator_input: Dict, generator_output: Dict):
+        input_token_ids = generator_input["net_input"]["src_tokens"]
+        target_token_ids = generator_output["target"]
+        predicted_token_ids = generator_output["prediction"]
+        reference = self.choose_discriminator_reference(input_token_ids, target_token_ids)
+        reward = self.discriminator(reference, predicted_token_ids)
+        prev_step = torch.roll(reward, 1, dims=1)
+        prev_step[:, 0] = 0.5
+        reward = reward - prev_step
+        return reward
+
     def pg_step(self, sample, batch_i, epoch, loader_len):
-        print("Policy Gradient Training")
+        # print("Policy Gradient Training")
 
         output = self.sequential_generation(sample, decoding_style=self.sequential_decoding_style, top_k=0, top_p=0.6)
 
@@ -216,22 +237,23 @@ class ModelTrainer:
             # if self.sequential_decoding_style == "gumbel":
             #     reward = self.discriminator(output['input_onehot'], output["output_onehot"])
             # else:
-            # reward = self.discriminator(sample['net_input']['src_tokens'], output["prediction"])
-            reward = self.discriminator(sample["net_input"]["src_tokens"], output["prediction"])
-            prev_step = torch.roll(reward, 1, dims=1)
-            prev_step[:, 0] = 0.5
-            reward = reward - prev_step
-            # reward = self.discriminator(output["prediction"], output["prediction"])
-            # gen_reward = (output["prediction"] == sample['target']).float()
+            reward = self.compute_discriminator_score(sample, output)
+            # reward = self.discriminator(sample["net_input"]["src_tokens"], output["prediction"])
+            # prev_step = torch.roll(reward, 1, dims=1)
+            # prev_step[:, 0] = 0.5
+            # reward = reward - prev_step
+            # # reward = self.discriminator(output["prediction"], output["prediction"])
+            # # gen_reward = (output["prediction"] == sample['target']).float()
 
-        pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
-                  # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
-                  #                   output.get("prediction", None))
+        pg_loss = self.compute_pg_loss(sample, output, reward)
+        # pg_loss = self.pg_criterion(output["logits"], sample['target'], reward, output.get("modified_logits", None), output.get("prediction", None))# + \
+        #           # self.pg_criterion(output["logits"], sample['target'], gen_reward, output.get("modified_logits", None),
+        #           #                   output.get("prediction", None))
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % min(self.args.train_bleu_every, loader_len) == 0:
                 self.evaluate_generator(
-                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], pg_loss,
+                    sample["net_input"]["src_tokens"], output["prediction"], output['target'], output["mask"], pg_loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="rl"
                 )
 
@@ -260,13 +282,19 @@ class ModelTrainer:
             "prediction": logits.argmax(-1)
         }
 
-        output["loss"] = self.g_criterion(output["logits"][output["mask"], :], output["target"][output["mask"]])
+        # output["loss"] = self.g_criterion(output["logits"][output["mask"], :], output["target"][output["mask"]])
         return output
 
     def teacher_forcing_generation(self, sample):
         logits = self.generator(sample)
 
         return self.wrap_for_output(sample, logits)
+
+    def compute_mle_loss(self, generator_input: Dict, generator_output: Dict):
+        mask = generator_output["mask"]
+        return self.g_criterion(
+            generator_output["logits"][mask, :], generator_output["target"][mask]
+        )
 
     def mle_step(self, sample, batch_i, epoch, loader_len, seq_decoding=False):
 
@@ -276,16 +304,16 @@ class ModelTrainer:
             print("ss_prob (probability of scheduled sampling)", ss_prob)
             output = self.sequential_generation(sample, decoding_style="ss", top_k=0, top_p=0.6, ss_prob=ss_prob)
         else:
-            print("MLE Training")
+            # print("MLE Training")
             output = self.teacher_forcing_generation(sample)
 
-        loss = output["loss"]
+        loss = self.compute_mle_loss(sample, output)
         # sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
 
         with torch.no_grad():
             if (batch_i + (epoch - 1) * loader_len) % self.args.train_bleu_every == 0:
                 self.evaluate_generator(
-                    sample["net_input"]["src_tokens"], output["prediction"], sample['target'], output["mask"], loss,
+                    sample["net_input"]["src_tokens"], output["prediction"], output['target'], output["mask"], loss,
                     sample['ntokens'], batch_i=batch_i, epoch_i=epoch, num_batches=loader_len, partition="train", strategy="mle"
                 )
 
@@ -352,19 +380,19 @@ class ModelTrainer:
         d_loss.backward()
         self.d_optimizer.step()
 
-    def format_sample(self, sample, extra_tokens=10):
+    def format_sample(self, sample, extra_tokens=0):
         sample = copy(sample)
 
         max_src_len = min(sample["net_input"]['src_tokens'].size(1), max(sample["net_input"]['src_lengths'].tolist()))
-        max_trg_len = min(sample["target"].size(1), max(sample["target_lengths"].tolist()))
+        max_trg_len = min(sample["target"].size(1), max(sample["target_lengths"].tolist()) + extra_tokens)
 
-        sample["net_input"]['src_tokens'] = sample["net_input"]['src_tokens'][:, :max_src_len].contiguous()
+        sample["net_input"]['src_tokens'] = sample["net_input"]["src_tokens"][:, :max_src_len].contiguous()
         sample["target"] = sample["target"][:, :max_trg_len].contiguous()
         sample["attention_mask"] = self.get_length_mask(sample["net_input"]["src_tokens"], sample["net_input"]['src_lengths'])
         return sample
 
     def train_loop(self, trainloader, epoch_i, num_update):
-        for i, sample in enumerate(trainloader):
+        for i, sample in enumerate(tqdm(trainloader, desc=f"Training at Epoch {epoch_i}", leave=True)):
 
             sample = self.format_sample(sample)
 
@@ -401,7 +429,8 @@ class ModelTrainer:
                 if i == 0 and epoch_i == 1:
                     print(f"Pretraining discriminator for {self.args.discriminator_pretraining} epochs")
 
-            if hasattr(self, "discriminator"):
+            # no training if no optimizer present. Use case: pre-trained discriminator
+            if hasattr(self, "discriminator") and self.d_optimizer is not None:
                 self.discriminator_step(sample, i, epoch_i, len(trainloader))
 
         return num_update
@@ -451,6 +480,12 @@ class ModelTrainer:
         gen_acc = torch.sum(predictions == targets).float() / torch.numel(targets) * 100
         return gen_acc
 
+    def choose_discriminator_reference(self, source, target):
+        """
+        Allows to choose whether to use source tokens or target tokens as a reference.
+        """
+        return source
+
     def evaluate_generator(
             self, original, predictions, targets, target_mask, loss, ntokens, batch_i, epoch_i, num_batches, partition=None,
             strategy=None, accumulate=False, write_sents=False
@@ -462,24 +497,25 @@ class ModelTrainer:
         sample_size = targets.size(0) if self.args.sentence_avg else ntokens
 
         if hasattr(self, "discriminator"):
+            discriminator_reference = self.choose_discriminator_reference(original, targets)
             with torch.no_grad():
-                discr_score_neg = self.discriminator(original, predictions).mean()
-                discr_score_pos = self.discriminator(original, targets).mean()
+                discr_score_neg = self.discriminator(discriminator_reference, predictions).mean()
+                discr_score_pos = self.discriminator(discriminator_reference, targets).mean()
         else:
             discr_score_neg = 0.
             discr_score_pos = 0.
 
         gen_acc = self.token_accuracy(predictions, targets, target_mask)
         bleu = self.compute_bleu(predictions, targets, accumulate=accumulate)
-        rouge = self.compute_rouge(predictions, original, accumulate=accumulate)
+        rouge = self.compute_rouge(predictions, original, accumulate=accumulate) if self.args.compute_rouge else None
 
         self.g_logging_meters[f'{partition}_loss'].update(loss, sample_size)
         self.g_logging_meters[f'{partition}_acc'].update(gen_acc)
         # self.d_logging_meters[f'{partition}_bleu'].update(bleu)
         # self.d_logging_meters[f'{partition}_rouge'].update(rouge)
 
-        logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
-                      f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
+        # logging.debug(f"G loss {self.g_logging_meters[f'{partition}_loss'].avg:.3f}, "
+        #               f"G acc {self.g_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
 
         if not hasattr(self, "last_sents"):
             self.last_sents = []
@@ -497,12 +533,12 @@ class ModelTrainer:
                 f"bleu/{partition}/P2": bleu["precisions"][1],
                 f"bleu/{partition}/P3": bleu["precisions"][2],
                 f"bleu/{partition}/P4": bleu["precisions"][3],
-                f"rouge/{partition}/rouge1/high/f1": rouge["rouge1"].high.fmeasure,
-                f"rouge/{partition}/rouge2/high/f1": rouge["rouge2"].high.fmeasure,
-                f"rouge/{partition}/rougeL/high/f1": rouge["rougeL"].high.fmeasure,
-                f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision,
-                f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision,
-                f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision,
+                f"rouge/{partition}/rouge1/high/f1": rouge["rouge1"].high.fmeasure if rouge is not None else 0.,
+                f"rouge/{partition}/rouge2/high/f1": rouge["rouge2"].high.fmeasure if rouge is not None else 0.,
+                f"rouge/{partition}/rougeL/high/f1": rouge["rougeL"].high.fmeasure if rouge is not None else 0.,
+                f"rouge/{partition}/rouge1/high/P": rouge["rouge1"].high.precision if rouge is not None else 0.,
+                f"rouge/{partition}/rouge2/high/P": rouge["rouge2"].high.precision if rouge is not None else 0.,
+                f"rouge/{partition}/rougeL/high/P": rouge["rougeL"].high.precision if rouge is not None else 0.,
                 f"discr_score/{partition}/negative": discr_score_neg,
                 f"discr_score/{partition}/positive": discr_score_pos,
             }, batch_i + (epoch_i - 1) * num_batches, write_sents=write_sents)
@@ -514,8 +550,8 @@ class ModelTrainer:
         self.d_logging_meters[f'{partition}_acc'].update(d_acc)
         self.d_logging_meters[f'{partition}_loss'].update(d_loss)
 
-        logging.debug(f"D loss {self.d_logging_meters[f'{partition}_loss'].avg:.3f}, "
-                      f"acc {self.d_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
+        # logging.debug(f"D loss {self.d_logging_meters[f'{partition}_loss'].avg:.3f}, "
+        #               f"acc {self.d_logging_meters[f'{partition}_acc'].avg:.3f} at batch {batch_i}")
         self.write_summary({
             f"Loss/{partition}/desc": d_loss,
             f"Accuracy/{partition}/desc": d_acc,
@@ -524,8 +560,11 @@ class ModelTrainer:
     def eval_generation(self, sample):
         return self.teacher_forcing_generation(sample)
 
+    def compute_evaluation_loss(self, generator_input, generator_output):
+        return self.compute_mle_loss(generator_input, generator_output)
+
     def eval_loop(self, valloader, epoch_i, force=False):
-        for i, sample in enumerate(valloader):
+        for i, sample in enumerate(tqdm(valloader, desc=f"Evaluation at Epoch {epoch_i}")):
 
             sample = self.format_sample(sample, extra_tokens=50)
 
@@ -537,13 +576,14 @@ class ModelTrainer:
                 if epoch_i > self.args.discriminator_pretraining or not hasattr(self, "discriminator") or force is True:
                     # generator validation
                     output = self.eval_generation(sample)
+                    loss = self.compute_evaluation_loss(sample, output)
                     self.evaluate_generator(
-                        sample["net_input"]["src_tokens"], output["prediction"], output["target"], output["mask"], output["loss"], ntokens=sample["ntokens"],
+                        sample["net_input"]["src_tokens"], output["prediction"], output["target"], output["mask"], loss, ntokens=sample["ntokens"],
                         batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid", strategy="mle", accumulate=i<len(valloader)-1, write_sents=True
                     )
 
-                # discriminator validation
-                if hasattr(self, "discriminator"):
+                # discriminator validation, no validation if no optimizer present. Use case: pre-trained discriminator
+                if hasattr(self, "discriminator") and self.d_optimizer is not None:
                     d_loss, acc = self.discrimnator_loss_acc(sample)
                     self.evaluate_discriminator(
                         d_loss, acc, batch_i=i, epoch_i=epoch_i, num_batches=len(valloader), partition="valid"
@@ -599,6 +639,11 @@ class ModelTrainer:
             seed = args.seed + epoch_i
             torch.manual_seed(seed)
 
+            # gradual linear growth of sentence length to simplify learning
+            # fixed_max_len = min(int(epoch_i / 50) + 10, args.fixed_max_len)
+            # print(f"Maximum sentence length at epoch {epoch_i} is {fixed_max_len}")
+            # max_positions_train = (fixed_max_len, fixed_max_len)
+
             max_positions_train = (args.fixed_max_len, args.fixed_max_len)
 
             # Initialize dataloader, starting at batch_offset
@@ -625,7 +670,7 @@ class ModelTrainer:
 
             # set training mode
             self.generator.train()
-            if hasattr(self, "discriminator"):
+            if hasattr(self, "discriminator") and self.d_optimizer is not None:
                 self.discriminator.train()
             # update_learning_rate(num_update, 8e4, args.g_learning_rate, args.lr_shrink, self.g_optimizer)
 
@@ -640,6 +685,10 @@ class ModelTrainer:
             if self.g_logging_meters['valid_loss'].avg < best_dev_loss:
                 best_dev_loss = self.g_logging_meters['valid_loss'].avg
                 self.save_generator(os.path.join(self.checkpoints_path, "best_gmodel.pt"))
+            self.at_epoch_end()
+
+    def at_epoch_end(self):
+        pass
 
     def save_generator(self, path):
         torch.save(self.generator, open(path, 'wb'), pickle_module=dill)
@@ -650,9 +699,90 @@ class ModelTrainer:
 
     def save_models(self, epoch_i):
         self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_gen.pt"))
-        self.save_discriminator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_discr.pt"))
+        if self.d_optimizer is not None:  # do not save discriminator if it has not been trained
+            self.save_discriminator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_discr.pt"))
         with open(os.path.join(self.checkpoints_path, "params.json"), "w") as paramsink:
             paramsink.write(json.dumps(self.args.__dict__, indent=4))
+
+
+class SeqEmbModelTrainer(ModelTrainer):
+    def __init__(self, args):
+        super(SeqEmbModelTrainer, self).__init__(args)
+        self.create_embedding_index()
+
+    def create_embedding_index(self):
+        import faiss
+        emb_weighs = self.get_target_embedder().weight.cpu().detach().numpy()
+        # self.emb_index = faiss.IndexFlatIP(emb_weighs.shape[1])  # build the index IndexFlatIP
+        # self.emb_index.add(normalize(emb_weighs))  # TODO why normalize?
+        from sklearn.neighbors import NearestNeighbors
+        self.emb_index = NearestNeighbors(algorithm="brute", metric="euclidean")
+        self.emb_index.fit(emb_weighs)
+
+    def create_generator(self, args):
+        assert args.encoder_embed_dim == args.decoder_out_embed_dim, \
+            "Input and output dimensionality of LST should match to train embedding generator"
+        self.generator = LSTMEmbModel(args, self.dataset.src_dict, self.dataset.dst_dict, use_cuda=self.use_cuda)
+        if self.args.g_ckpt_path is not None:
+            print(f"Loading pretrained generator from checkpoint {self.args.g_ckpt_path}")
+            self.generator.load_state_dict(torch.load(self.args.g_ckpt_path))
+        print("Generator loaded successfully!")
+
+    def create_discriminator(self, args):
+        pass
+
+    def sequential_generation(self, sample, decoding_style="rl", top_k=0, top_p=1.0, temp=.2, ss_prob=0.):
+        pass
+
+    def compute_evaluation_loss(self, generator_input, generator_output):
+        loss = self.compute_mle_loss(generator_input, generator_output)
+        return loss
+
+    def get_target_embedder(self):
+        return self.generator.decoder.embed_tokens
+
+    def embeddings2nn_token_ids(self, predicted_embs):
+        prediction_embs_np = predicted_embs.cpu().detach().numpy()
+        # flattening across batch to avoid loops
+        prediction_embs_np_glued = prediction_embs_np.reshape(-1, predicted_embs.shape[-1])
+        # dist, nnbrs = self.emb_index.search(normalize(prediction_embs_np_glued), 1)
+        # dist, nnbrs = self.emb_index.search(prediction_embs_np_glued, 1)
+        dist, nnbrs = self.emb_index.kneighbors(prediction_embs_np_glued, 1)
+        nnbrs = np.squeeze(nnbrs, axis=-1)
+        # reshaping back
+        nnbrs = nnbrs.reshape((prediction_embs_np.shape[0], predicted_embs.shape[1]))
+        return torch.from_numpy(nnbrs)
+
+    def create_losses(self):
+        def loss(pred, true):
+            return torch.norm(pred - true, dim=-1, p=1).mean()
+
+        self.l2_emb_loss = loss
+
+    def format_sample(self, sample, extra_tokens=0):
+        sample = super().format_sample(sample)
+
+        with torch.no_grad():
+            sample["target_embeddings"] = self.get_target_embedder()(sample["target"])
+        return sample
+
+    def compute_mle_loss(self, generator_input:Dict, generator_output: Dict):
+        return torch.norm(generator_output["logits"] - generator_input["target_embeddings"], dim=-1, p=1).mean()
+
+    def wrap_for_output(self, sample, logits):
+        pred_token_ids = self.embeddings2nn_token_ids(logits)[:, :sample["target"].shape[1]]
+
+        output = {
+            "logits": logits[:, :sample["target"].shape[1], :],
+            "target": sample["target"],
+            "mask": self.get_length_mask(sample["target"]),
+            "prediction": pred_token_ids,
+        }
+
+        return output
+
+    def at_epoch_end(self):
+        self.create_embedding_index()
 
 
 def update_learning_rate(update_times, target_times, init_lr, lr_shrink, optimizer):

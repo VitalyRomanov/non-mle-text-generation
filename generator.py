@@ -291,6 +291,33 @@ class LSTMDecoder(nn.Module):
         utils.set_incremental_state(self, incremental_state, 'cached_state', new_state)
 
 
+class LSTMEmbDecoder(LSTMDecoder):
+    def __init__(self, dictionary, encoder_embed_dim=512, embed_dim=512,
+                 out_embed_dim=512, num_layers=1, dropout_in=0.1,
+                 dropout_out=0.1, use_cuda=True):
+        super(LSTMEmbDecoder, self).__init__(
+            dictionary, encoder_embed_dim, embed_dim, out_embed_dim, num_layers, dropout_in, dropout_out, use_cuda
+        )
+        self.fc_out = Linear(out_embed_dim, embed_dim, dropout=dropout_out)
+
+
+class LSTMEmbModel(LSTMModel):
+    def __init__(self, *args, **kwargs):
+        super(LSTMEmbModel, self).__init__(*args, **kwargs)
+
+    def create_decoder(self, args):
+        self.decoder = LSTMEmbDecoder(
+            self.dst_dict,
+            encoder_embed_dim=args.encoder_embed_dim,
+            embed_dim=args.decoder_embed_dim,
+            out_embed_dim=args.decoder_out_embed_dim,
+            num_layers=args.decoder_layers,
+            dropout_in=args.decoder_dropout_in,
+            dropout_out=args.decoder_dropout_out,
+            use_cuda=self.use_cuda
+        )
+
+
 class VarLSTMDecoder(LSTMDecoder):
     def __init__(self, dictionary, encoder_embed_dim=512, embed_dim=512,
                  out_embed_dim=512, num_layers=1, dropout_in=0.1,
