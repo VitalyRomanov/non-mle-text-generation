@@ -699,7 +699,7 @@ class ModelTrainer:
 
     def save_models(self, epoch_i):
         self.save_generator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_gen.pt"))
-        if self.d_optimizer is not None:  # do not save discriminator if it has not been trained
+        if hasattr(self, "d_optimizer") and self.d_optimizer is not None:  # do not save discriminator if it has not been trained
             self.save_discriminator(os.path.join(self.checkpoints_path, f"joint_{self.g_logging_meters['valid_loss'].avg:.3f}.epoch_{epoch_i}_discr.pt"))
         with open(os.path.join(self.checkpoints_path, "params.json"), "w") as paramsink:
             paramsink.write(json.dumps(self.args.__dict__, indent=4))
@@ -763,18 +763,19 @@ class SeqEmbModelTrainer(ModelTrainer):
         sample = super().format_sample(sample)
 
         with torch.no_grad():
-            sample["target_embeddings"] = self.get_target_embedder()(sample["target"])
+            embedder = self.get_target_embedder()
+            sample["target_embeddings"] = embedder(sample["target"].to(embedder.weight.device))
         return sample
 
     def compute_mle_loss(self, generator_input:Dict, generator_output: Dict):
         return torch.norm(generator_output["logits"] - generator_input["target_embeddings"], dim=-1, p=1).mean()
 
     def wrap_for_output(self, sample, logits):
-        pred_token_ids = self.embeddings2nn_token_ids(logits)[:, :sample["target"].shape[1]]
+        pred_token_ids = self.embeddings2nn_token_ids(logits)[:, :sample["target"].shape[1]].to(logits.device)
 
         output = {
             "logits": logits[:, :sample["target"].shape[1], :],
-            "target": sample["target"],
+            "target": sample["target"].to(logits.device),
             "mask": self.get_length_mask(sample["target"]),
             "prediction": pred_token_ids,
         }
