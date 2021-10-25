@@ -191,6 +191,8 @@ class LSTMDecoder(nn.Module):
         self.attention = AttentionLayer(encoder_embed_dim, embed_dim)
         if embed_dim != out_embed_dim:
             self.additional_fc = Linear(embed_dim, out_embed_dim)
+        self.pre_fc1 = Linear(out_embed_dim, out_embed_dim, dropout=dropout_out)
+        self.pre_fc2 = Linear(out_embed_dim, out_embed_dim, dropout=dropout_out)
         self.fc_out = Linear(out_embed_dim, num_embeddings, dropout=dropout_out)
 
     def create_layers(self, encoder_embed_dim, embed_dim, num_layers):
@@ -266,6 +268,8 @@ class LSTMDecoder(nn.Module):
         # srclen x tgtlen x bsz -> bsz x tgtlen x srclen
         attn_scores = attn_scores.transpose(0, 2)
 
+        x = nn.functional.relu(self.pre_fc1(x))
+        x = nn.functional.relu(self.pre_fc2(x))
         x = self.fc_out(x)
 
         return x, attn_scores
