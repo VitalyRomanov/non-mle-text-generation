@@ -294,11 +294,19 @@ class LSTMDecoder(nn.Module):
 class LSTMEmbDecoder(LSTMDecoder):
     def __init__(self, dictionary, encoder_embed_dim=512, embed_dim=512,
                  out_embed_dim=512, num_layers=1, dropout_in=0.1,
-                 dropout_out=0.1, use_cuda=True):
+                 dropout_out=0.1, use_cuda=True, pretrained_embeddings=None):
         super(LSTMEmbDecoder, self).__init__(
             dictionary, encoder_embed_dim, embed_dim, out_embed_dim, num_layers, dropout_in, dropout_out, use_cuda
         )
         self.fc_out = Linear(out_embed_dim, embed_dim, dropout=dropout_out)
+        if pretrained_embeddings is not None:
+            import numpy as np
+            pretrained_embeddings = torch.from_numpy(np.load(pretrained_embeddings)).float()
+            if pretrained_embeddings.shape[0] > self.embed_tokens.weight.shape[0]:
+                pretrained_embeddings = pretrained_embeddings[:self.embed_tokens.weight.shape[0], :]
+            assert self.embed_tokens.weight.shape == pretrained_embeddings.shape
+            self.embed_tokens.weight = pretrained_embeddings
+            self.embed_tokens.weight.requires_grad = False
 
 
 class LSTMEmbModel(LSTMModel):
@@ -314,7 +322,8 @@ class LSTMEmbModel(LSTMModel):
             num_layers=args.decoder_layers,
             dropout_in=args.decoder_dropout_in,
             dropout_out=args.decoder_dropout_out,
-            use_cuda=self.use_cuda
+            use_cuda=self.use_cuda,
+            pretrained_embeddings = args.pretrained_embeddings
         )
 
 

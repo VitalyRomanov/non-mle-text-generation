@@ -232,7 +232,6 @@ class SeqT5Bleurt(SeqT5Trainer):
         predicted_token_ids = generator_output["prediction"]
         reference = self.choose_discriminator_reference(input_token_ids, target_token_ids)
         reward = self.discriminator(reference, predicted_token_ids)  # dim (bsize x 1)
-        reward = reward.cuda(f'cuda:{self.args.gpuid[0]}')
         return reward
 
     def choose_discriminator_reference(self, source, target):
