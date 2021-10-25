@@ -713,11 +713,11 @@ class SeqEmbModelTrainer(ModelTrainer):
     def create_embedding_index(self):
         import faiss
         emb_weighs = self.get_target_embedder().weight.cpu().detach().numpy()
-        # self.emb_index = faiss.IndexFlatIP(emb_weighs.shape[1])  # build the index IndexFlatIP
-        # self.emb_index.add(normalize(emb_weighs))  # TODO why normalize?
-        from sklearn.neighbors import NearestNeighbors
-        self.emb_index = NearestNeighbors(algorithm="brute", metric="euclidean")
-        self.emb_index.fit(emb_weighs)
+        self.emb_index = faiss.IndexFlatL2(emb_weighs.shape[1])  # build the index IndexFlatIP
+        self.emb_index.add(emb_weighs)  #normalize(emb_weighs))  # TODO why normalize?
+        # from sklearn.neighbors import NearestNeighbors
+        # self.emb_index = NearestNeighbors(algorithm="brute", metric="euclidean")
+        # self.emb_index.fit(emb_weighs)
 
     def create_generator(self, args):
         assert args.encoder_embed_dim == args.decoder_out_embed_dim, \
@@ -746,8 +746,8 @@ class SeqEmbModelTrainer(ModelTrainer):
         # flattening across batch to avoid loops
         prediction_embs_np_glued = prediction_embs_np.reshape(-1, predicted_embs.shape[-1])
         # dist, nnbrs = self.emb_index.search(normalize(prediction_embs_np_glued), 1)
-        # dist, nnbrs = self.emb_index.search(prediction_embs_np_glued, 1)
-        dist, nnbrs = self.emb_index.kneighbors(prediction_embs_np_glued, 1)
+        dist, nnbrs = self.emb_index.search(prediction_embs_np_glued, 1)
+        # dist, nnbrs = self.emb_index.kneighbors(prediction_embs_np_glued, 1)
         nnbrs = np.squeeze(nnbrs, axis=-1)
         # reshaping back
         nnbrs = nnbrs.reshape((prediction_embs_np.shape[0], predicted_embs.shape[1]))
@@ -768,7 +768,10 @@ class SeqEmbModelTrainer(ModelTrainer):
         return sample
 
     def compute_mle_loss(self, generator_input:Dict, generator_output: Dict):
-        return torch.norm(generator_output["logits"] - generator_input["target_embeddings"], dim=-1, p=1).mean()
+        mask = generator_output["mask"]
+        predicted = generator_output["logits"][mask, :]
+        true = generator_input["target_embeddings"][mask, :]
+        return torch.norm(predicted - true, dim=-1, p=2).mean()
 
     def wrap_for_output(self, sample, logits):
         pred_token_ids = self.embeddings2nn_token_ids(logits)[:, :sample["target"].shape[1]].to(logits.device)
