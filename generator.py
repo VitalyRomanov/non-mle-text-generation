@@ -242,6 +242,7 @@ class LSTMDecoder(nn.Module):
 
                 # hidden state becomes the input to the next layer
                 input = F.dropout(hidden, p=self.dropout_out, training=self.training)
+                input = input / torch.norm(input, dim=-1).unsqueeze(1)
 
                 # save state for next time step
                 prev_hiddens[i] = hidden
@@ -309,7 +310,8 @@ class LSTMEmbDecoder(LSTMDecoder):
             if pretrained_embeddings.shape[0] > self.embed_tokens.weight.shape[0]:
                 pretrained_embeddings = pretrained_embeddings[:self.embed_tokens.weight.shape[0], :]
             assert self.embed_tokens.weight.shape == pretrained_embeddings.shape
-            self.embed_tokens.weight = pretrained_embeddings
+            norm = torch.norm(pretrained_embeddings, dim=-1).unsqueeze(1)
+            self.embed_tokens.weight = torch.nn.Parameter(pretrained_embeddings / norm)
             self.embed_tokens.weight.requires_grad = False
 
 

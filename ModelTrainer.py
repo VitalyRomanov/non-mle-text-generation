@@ -713,7 +713,7 @@ class SeqEmbModelTrainer(ModelTrainer):
     def create_embedding_index(self):
         import faiss
         emb_weighs = self.get_target_embedder().weight.cpu().detach().numpy()
-        self.emb_index = faiss.IndexFlatL2(emb_weighs.shape[1])  # build the index IndexFlatIP
+        self.emb_index = faiss.IndexFlatIP(emb_weighs.shape[1])  # build the index IndexFlatIP
         self.emb_index.add(emb_weighs)  #normalize(emb_weighs))  # TODO why normalize?
         # from sklearn.neighbors import NearestNeighbors
         # self.emb_index = NearestNeighbors(algorithm="brute", metric="euclidean")
@@ -771,7 +771,8 @@ class SeqEmbModelTrainer(ModelTrainer):
         mask = generator_output["mask"]
         predicted = generator_output["logits"][mask, :]
         true = generator_input["target_embeddings"][mask, :]
-        return torch.norm(predicted - true, dim=-1, p=2).mean()
+        return (predicted * true).sum(-1).mean()
+        # return torch.norm(predicted - true, dim=-1, p=2).mean()
 
     def wrap_for_output(self, sample, logits):
         pred_token_ids = self.embeddings2nn_token_ids(logits)[:, :sample["target"].shape[1]].to(logits.device)
