@@ -314,6 +314,81 @@ class LSTMEmbDecoder(LSTMDecoder):
             self.embed_tokens.weight = torch.nn.Parameter(pretrained_embeddings / norm)
             self.embed_tokens.weight.requires_grad = False
 
+    def forward(self, prev_output_tokens, encoder_out, incremental_state=None, inference=False):
+        if incremental_state is not None:  # TODO what is this?
+            prev_output_tokens = prev_output_tokens[:, -1:]
+        bsz, seqlen = prev_output_tokens.size()
+
+        # get outputs from encoder
+        encoder_outs, _, _ = encoder_out
+        srclen = encoder_outs.size(0)
+
+        x = self.embed_tokens(prev_output_tokens) # (bze, seqlen, embed_dim)
+        x = F.dropout(x, p=self.dropout_in, training=self.training)
+        embed_dim = x.size(2)
+
+        x = x.transpose(0, 1) # (seqlen, bsz, embed_dim)
+
+        # initialize previous states (or get from cache during incremental generation)
+        # cached_state = utils.get_incremental_state(self, incremental_state, 'cached_state')
+        # initialize previous states (or get from cache during incremental generation)
+        cached_state = utils.get_incremental_state(self, incremental_state, 'cached_state')
+
+        if cached_state is not None:
+            prev_hiddens, prev_cells, input_feed = cached_state
+        else:
+            _, encoder_hiddens, encoder_cells = encoder_out
+            num_layers = len(self.layers)
+            prev_hiddens = [encoder_hiddens[i] for i in range(num_layers)]
+            prev_cells = [encoder_cells[i] for i in range(num_layers)]
+            input_feed = Variable(x.data.new(bsz, embed_dim).zero_())
+
+        attn_scores = Variable(x.data.new(srclen, seqlen, bsz).zero_())
+        outs = []
+        for j in range(seqlen):
+            # input feeding: concatenate context vector from previous time step
+            input = torch.cat((x[j, :, :], input_feed), dim=1)
+
+            for i, rnn in enumerate(self.layers):
+                # recurrent cell
+                hidden, cell = rnn(input, (prev_hiddens[i], prev_cells[i]))
+
+                # hidden state becomes the input to the next layer
+                input = F.dropout(hidden, p=self.dropout_out, training=self.training)
+                input = input / torch.norm(input, dim=-1).unsqueeze(1)
+
+                # save state for next time step
+                prev_hiddens[i] = hidden
+                prev_cells[i] = cell
+
+            # apply attention using the last layer's hidden state
+            out, attn_scores[:, j, :] = self.attention(hidden, encoder_outs)
+            out = F.dropout(out, p=self.dropout_out, training=self.training)
+
+            # input feeding
+            input_feed = out
+
+            # save final output
+            outs.append(out)
+
+        # cache previous states (no-op except during incremental generation)
+        utils.set_incremental_state(
+            self, incremental_state, 'cached_state', (prev_hiddens, prev_cells, input_feed))
+
+        # collect outputs across time steps
+        x = torch.cat(outs, dim=0).view(seqlen, bsz, embed_dim)
+        # T x B x C -> B x T x C
+        x = x.transpose(1, 0)
+        # srclen x tgtlen x bsz -> bsz x tgtlen x srclen
+        attn_scores = attn_scores.transpose(0, 2)
+
+        x = nn.functional.relu(self.pre_fc1(x))
+        x = nn.functional.relu(self.pre_fc2(x))
+        x = self.fc_out(x)
+        x = x / torch.norm(x, dim=-1).unsqueeze(-1)
+
+        return x, attn_scores
+
 
 class LSTMEmbModel(LSTMModel):
     def __init__(self, *args, **kwargs):
@@ -331,6 +406,14 @@ class LSTMEmbModel(LSTMModel):
             use_cuda=self.use_cuda,
             pretrained_embeddings = args.pretrained_embeddings
         )
+
+    def forward(self, sample, inference=False):
+        encoder_out = self.encoder(sample['net_input']['src_tokens'],
+                                   sample['net_input']['src_lengths'])  # TODO what is net input
+
+        decoder_out, attn_scores = self.decoder(sample['net_input']['prev_output_tokens'], encoder_out,
+                                                inference=inference)
+        return decoder_out
 
 
 class VarLSTMDecoder(LSTMDecoder):

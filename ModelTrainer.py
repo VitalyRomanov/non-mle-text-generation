@@ -771,7 +771,15 @@ class SeqEmbModelTrainer(ModelTrainer):
         mask = generator_output["mask"]
         predicted = generator_output["logits"][mask, :]
         true = generator_input["target_embeddings"][mask, :]
-        return (predicted * true).sum(-1).mean()
+        inner = (predicted * true).sum(dim=-1, keepdim=True)
+        orth = predicted - inner * true
+        orth = orth / torch.norm(orth, dim=-1, keepdim=True)
+        dist = (orth * predicted).sum(-1, keepdim=True)
+
+        dist = 0.2 + dist - inner
+        dist[dist < 0.] = 0
+        return dist.mean()
+        # return (predicted * true).sum(-1).mean()
         # return torch.norm(predicted - true, dim=-1, p=2).mean()
 
     def wrap_for_output(self, sample, logits):
