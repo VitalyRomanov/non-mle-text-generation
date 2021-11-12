@@ -433,6 +433,8 @@ class ModelTrainer:
             if hasattr(self, "discriminator") and self.d_optimizer is not None:
                 self.discriminator_step(sample, i, epoch_i, len(trainloader))
 
+            self.at_batch_end()
+
         return num_update
 
     def decode_sentences(self, batch, for_referece=False):
@@ -687,6 +689,9 @@ class ModelTrainer:
                 self.save_generator(os.path.join(self.checkpoints_path, "best_gmodel.pt"))
             self.at_epoch_end()
 
+    def at_batch_end(self):
+        pass
+
     def at_epoch_end(self):
         pass
 
@@ -796,6 +801,15 @@ class SeqEmbModelTrainer(ModelTrainer):
 
     def at_epoch_end(self):
         self.create_embedding_index()
+
+    def normalize_embedding_matrix(self):
+        with torch.no_grad():
+            weight = self.get_target_embedder().weight
+            norm = torch.norm(weight, dim=-1, keepdim=True)
+            weight.div_(norm)
+
+    def at_batch_end(self):
+        self.normalize_embedding_matrix()
 
 
 def update_learning_rate(update_times, target_times, init_lr, lr_shrink, optimizer):
