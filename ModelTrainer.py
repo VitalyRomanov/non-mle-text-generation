@@ -722,6 +722,10 @@ class SeqEmbModelTrainer(ModelTrainer):
         self.extra_token_clf_layer2 = torch.nn.Linear(self.args.decoder_out_embed_dim, len(self.dataset.dst_dict))
         self.extra_token_loss = torch.nn.CrossEntropyLoss()
 
+        if self.use_cuda:
+            self.extra_token_clf_layer1.cuda()
+            self.extra_token_clf_layer2.cuda()
+
     def extra_token_classifier(self, decoder_out):
         x = self.extra_token_clf_layer1(decoder_out)
         x = torch.relu(x)
