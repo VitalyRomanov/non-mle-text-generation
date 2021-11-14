@@ -143,6 +143,8 @@ def add_generator_model_args(parser):
                         help='Start from epoch')
     parser.add_argument('--pretrained_embeddings', default=None, type=str,
                         help='')
+    parser.add_argument('--extra_token_loss', action='store_true', default=False,
+                        help='')
     return parser
 
 def add_discriminator_model_args(parser):

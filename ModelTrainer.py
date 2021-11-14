@@ -714,6 +714,19 @@ class SeqEmbModelTrainer(ModelTrainer):
     def __init__(self, args):
         super(SeqEmbModelTrainer, self).__init__(args)
         self.create_embedding_index()
+        if self.args.extra_token_loss:
+            self.create_extra_token_classifier()
+
+    def create_extra_token_classifier(self):
+        self.extra_token_clf_layer1 = torch.nn.Linear(self.args.decoder_out_embed_dim, self.args.decoder_out_embed_dim)
+        self.extra_token_clf_layer2 = torch.nn.Linear(self.args.decoder_out_embed_dim, len(self.dataset.dst_dict))
+        self.extra_token_loss = torch.nn.CrossEntropyLoss()
+
+    def extra_token_classifier(self, decoder_out):
+        x = self.extra_token_clf_layer1(decoder_out)
+        x = torch.relu(x)
+        x = self.extra_token_clf_layer2(decoder_out)
+        return x
 
     def create_embedding_index(self):
         import faiss
@@ -783,7 +796,14 @@ class SeqEmbModelTrainer(ModelTrainer):
 
         dist = 0.2 + dist - inner
         dist[dist < 0.] = 0
-        return dist.mean()
+
+        loss = dist.mean()
+
+        if self.args.extra_token_loss:
+            extra_logits = self.extra_token_classifier(predicted)
+            extra_loss = self.extra_token_loss(extra_logits, generator_input["target"][mask])
+            loss = loss + extra_loss
+        return loss
         # return (predicted * true).sum(-1).mean()
         # return torch.norm(predicted - true, dim=-1, p=2).mean()
 
