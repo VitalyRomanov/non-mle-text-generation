@@ -729,7 +729,7 @@ class SeqEmbModelTrainer(ModelTrainer):
     def extra_token_classifier(self, decoder_out):
         x = self.extra_token_clf_layer1(decoder_out)
         x = torch.relu(x)
-        x = self.extra_token_clf_layer2(decoder_out)
+        x = self.extra_token_clf_layer2(x)
         return x
 
     def create_embedding_index(self):
@@ -834,6 +834,18 @@ class SeqEmbModelTrainer(ModelTrainer):
 
     def at_batch_end(self):
         self.normalize_embedding_matrix()
+        
+        
+class SeqEmbModelTrainerWithGuidance(SeqEmbModelTrainer):
+    """
+    This is going to be a kind of self-supervised model. First, we need to create a helper decoder. It will allow
+    to bypass the differentiation constraint. It will be trained using teacher forcing. On the output of this decoder
+    there will be embeddings, but they will be different from embeddings that are used on the decoder input. Instead,
+    these will be embeddings that another decoder will try to replicate. Another decoder will take embeddings as the
+    input and will be fully differentiable. It will try to generate the same embeddings as the first decoder.
+    """
+    def __init__(self, *args, **kwargs):
+        super(SeqEmbModelTrainerWithGuidance, self).__init__(*args, **kwargs)
 
 
 def update_learning_rate(update_times, target_times, init_lr, lr_shrink, optimizer):
