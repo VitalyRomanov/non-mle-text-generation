@@ -25,7 +25,7 @@ import data
 import utils
 from meters import AverageMeter
 from discriminator import Discriminator, AttDiscriminator
-from generator import LSTMModel, VarLSTMModel, LSTMEmbModel
+from generator import LSTMModel, VarLSTMModel, LSTMEmbModel, LSTMEmbHelperDecoder, TokenRecovery
 # from train_generator import train_g
 # from train_discriminator import train_d
 from PGLoss import PGLoss
@@ -714,23 +714,13 @@ class SeqEmbModelTrainer(ModelTrainer):
     def __init__(self, args):
         super(SeqEmbModelTrainer, self).__init__(args)
         self.create_embedding_index()
-        if self.args.extra_token_loss:
-            self.create_extra_token_classifier()
 
     def create_extra_token_classifier(self):
-        self.extra_token_clf_layer1 = torch.nn.Linear(self.args.decoder_out_embed_dim, self.args.decoder_out_embed_dim)
-        self.extra_token_clf_layer2 = torch.nn.Linear(self.args.decoder_out_embed_dim, len(self.dataset.dst_dict))
+        self.token_classifier = TokenRecovery(self.args.decoder_out_embed_dim, len(self.dataset.dst_dict))
         self.extra_token_loss = torch.nn.CrossEntropyLoss()
 
         if self.use_cuda:
-            self.extra_token_clf_layer1.cuda()
-            self.extra_token_clf_layer2.cuda()
-
-    def extra_token_classifier(self, decoder_out):
-        x = self.extra_token_clf_layer1(decoder_out)
-        x = torch.relu(x)
-        x = self.extra_token_clf_layer2(x)
-        return x
+            self.token_classifier.cuda()
 
     def create_embedding_index(self):
         import faiss
@@ -749,6 +739,8 @@ class SeqEmbModelTrainer(ModelTrainer):
             print(f"Loading pretrained generator from checkpoint {self.args.g_ckpt_path}")
             self.generator.load_state_dict(torch.load(self.args.g_ckpt_path))
         print("Generator loaded successfully!")
+        if self.args.extra_token_loss:
+            self.create_extra_token_classifier()
 
     def create_discriminator(self, args):
         pass
@@ -804,7 +796,7 @@ class SeqEmbModelTrainer(ModelTrainer):
         loss = dist.mean()
 
         if self.args.extra_token_loss:
-            extra_logits = self.extra_token_classifier(predicted)
+            extra_logits = self.token_classifier(predicted)
             extra_loss = self.extra_token_loss(extra_logits, generator_input["target"][mask])
             loss = loss + extra_loss
         return loss
@@ -846,6 +838,26 @@ class SeqEmbModelTrainerWithGuidance(SeqEmbModelTrainer):
     """
     def __init__(self, *args, **kwargs):
         super(SeqEmbModelTrainerWithGuidance, self).__init__(*args, **kwargs)
+        self.args.extra_token_loss = True
+
+    def create_generator(self, args):
+        super().create_generator(args)
+        self.helper_decoder = LSTMEmbHelperDecoder(
+            self.dataset.dst_dict,
+            encoder_embed_dim=args.encoder_embed_dim,
+            embed_dim=args.decoder_embed_dim,
+            out_embed_dim=args.decoder_out_embed_dim,
+            num_layers=args.decoder_layers,
+            dropout_in=args.decoder_dropout_in,
+            dropout_out=args.decoder_dropout_out,
+            use_cuda=self.use_cuda
+        )
+
+    def teacher_forcing_generation(self, sample):
+        logits = self.generator(sample)
+        helper_embeddings = self.helper_decoder(prev_output_tokens, encoder_out)
+
+        return self.wrap_for_output(sample, logits)
 
 
 def update_learning_rate(update_times, target_times, init_lr, lr_shrink, optimizer):

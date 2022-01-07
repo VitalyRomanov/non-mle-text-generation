@@ -8,7 +8,7 @@ from torch import cuda
 import options
 import utils
 
-from ModelTrainer import ModelTrainer, SeqEmbModelTrainer
+from ModelTrainer import ModelTrainer, SeqEmbModelTrainer, SeqEmbModelTrainerWithGuidance
 from SeqT5Trainer import SeqT5Trainer, SeqT5Mle, SeqT5RL, SeqT5Gumbel, SeqT5Bleurt, SeqEmbT5Bleurt
 from discriminator import AttDiscriminator
 from generator import VarLSTMModel, LSTMModel
@@ -143,6 +143,8 @@ if __name__ == "__main__":
         trainer = SeqEmbT5Bleurt(options)
     elif model_name == "embgen":
         trainer = SeqEmbModelTrainer(options)
+    elif model_name == "guided_embgen":
+        trainer = SeqEmbModelTrainerWithGuidance(options)
     else:
         raise ValueError("Choose appropriate model")
     trainer.train()

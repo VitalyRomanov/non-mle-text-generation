@@ -390,6 +390,25 @@ class LSTMEmbDecoder(LSTMDecoder):
         return x, attn_scores
 
 
+class LSTMEmbHelperDecoder(LSTMDecoder):
+    def __init__(self, dictionary, encoder_embed_dim=512, embed_dim=512,
+                 out_embed_dim=512, num_layers=1, dropout_in=0.1,
+                 dropout_out=0.1, use_cuda=True, pretrained_embeddings=None):
+        super(LSTMEmbHelperDecoder, self).__init__(
+            dictionary, encoder_embed_dim, embed_dim, out_embed_dim, num_layers, dropout_in, dropout_out, use_cuda
+        )
+        self.fc_out = Linear(out_embed_dim, embed_dim, dropout=dropout_out)
+        if pretrained_embeddings is not None:
+            import numpy as np
+            pretrained_embeddings = torch.from_numpy(np.load(pretrained_embeddings)).float()
+            if pretrained_embeddings.shape[0] > self.embed_tokens.weight.shape[0]:
+                pretrained_embeddings = pretrained_embeddings[:self.embed_tokens.weight.shape[0], :]
+            assert self.embed_tokens.weight.shape == pretrained_embeddings.shape
+            norm = torch.norm(pretrained_embeddings, dim=-1).unsqueeze(1)
+            self.embed_tokens.weight = torch.nn.Parameter(pretrained_embeddings / norm)
+            self.embed_tokens.weight.requires_grad = False
+
+
 class LSTMEmbModel(LSTMModel):
     def __init__(self, *args, **kwargs):
         super(LSTMEmbModel, self).__init__(*args, **kwargs)
@@ -542,6 +561,19 @@ class VarLSTMDecoder(LSTMDecoder):
             return x, attn_scores, kld
 
 
+class TokenRecovery(nn.Module):
+    def __init__(self, input_size, output_size):
+        super(TokenRecovery, self).__init__()
+        self.extra_token_clf_layer1 = torch.nn.Linear(input_size, input_size)
+        self.extra_token_clf_layer2 = torch.nn.Linear(input_size, output_size)
+
+    def forward(self, x):
+        x = self.extra_token_clf_layer1(x)
+        x = torch.relu(x)
+        x = self.extra_token_clf_layer2(x)
+        return x
+
+
 # TODO why they use this specific initialization
 def Embedding(num_embeddings, embedding_dim, padding_idx):
     m = nn.Embedding(num_embeddings, embedding_dim, padding_idx=padding_idx)
@@ -565,7 +597,7 @@ def LSTMCell(input_size, hidden_size, **kwargs):
     return m
 
 
-def Linear(in_features, out_features, bias=True, dropout=0):
+def Linear(in_features, out_features, bias=True, dropout=0.):
     """Weight-normalized Linear layer (input: N x T x C)"""
     m = nn.Linear(in_features, out_features, bias=bias)
     m.weight.data.uniform_(-0.1, 0.1)
